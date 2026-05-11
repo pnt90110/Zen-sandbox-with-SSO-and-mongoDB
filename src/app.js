@@ -666,11 +666,24 @@ function drawCircle(cx, cy, radius, material) {
       }
       const i = idx(x, y);
       const previousMaterial = cells[i];
-      if ((material === Material.WATER || material === Material.OIL) && cells[i] === Material.STONE) {
+      if ((material === Material.WATER || material === Material.OIL || material === Material.SAND) && cells[i] === Material.STONE) {
         continue;
       }
       if (material === Material.SMOKE && (cells[i] === Material.STONE || cells[i] === Material.WATER || cells[i] === Material.OIL || cells[i] === Material.SAND)) {
         continue;
+      }
+      if (material === Material.SAND && (cells[i] === Material.WATER || cells[i] === Material.OIL)) {
+        const displaced = cells[i];
+        // try to push the displaced fluid up one cell
+        if (y > 0) {
+          const above = idx(x, y - 1);
+          if (cells[above] === Material.EMPTY) {
+            cells[above] = displaced;
+            life[above] = 0;
+            fireState[above] = 0;
+          }
+        }
+        // place sand regardless
       }
       if (material === Material.FIRE && previousMaterial === Material.WATER) {
         cells[i] = Material.SMOKE;
