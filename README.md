@@ -1,4 +1,4 @@
-zen-sandbox-drawing-game.vercel.app
+[Play Zen Sandbox](https://zen-sandbox-drawing-game.vercel.app)
 # The Zen Sandbox (Prototype)
 
 A minimalist, desktop-first cellular automata toy focused on calm interaction and satisfying material flow.
