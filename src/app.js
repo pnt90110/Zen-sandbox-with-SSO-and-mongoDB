@@ -680,6 +680,30 @@ function updateIce(x, y, i) {
 }
 
 function updateLava(x, y, i) {
+  const lavaAge = life[i] + fireState[i] * 256;
+  const nextAge = Math.min(lavaAge + 1, 3600);
+  life[i] = nextAge & 255;
+  fireState[i] = nextAge >> 8;
+
+  if (lavaAge > 1500) {
+    const coolingProgress = Math.min(1, (lavaAge - 1500) / 2100);
+    if (rand() < 0.002 + coolingProgress * 0.028) {
+      cells[i] = Material.STONE;
+      life[i] = 0;
+      fireState[i] = 0;
+      updated[i] = 1;
+      return;
+    }
+  }
+
+  if (lavaAge >= 3600) {
+    cells[i] = Material.STONE;
+    life[i] = 0;
+    fireState[i] = 0;
+    updated[i] = 1;
+    return;
+  }
+
   // React with neighbors
   const neighbors4 = [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y]];
   for (let n = 0; n < neighbors4.length; n++) {
