@@ -6,6 +6,8 @@ const Material = {
   STONE: 4,
   FIRE: 5,
   OIL: 6,
+  ICE: 7,
+  LAVA: 8,
 };
 
 const MATERIAL_ORDER = [
@@ -15,6 +17,8 @@ const MATERIAL_ORDER = [
   Material.STONE,
   Material.FIRE,
   Material.OIL,
+  Material.ICE,
+  Material.LAVA,
 ];
 
 const KEY_TO_MATERIAL = {
@@ -24,6 +28,8 @@ const KEY_TO_MATERIAL = {
   4: Material.STONE,
   5: Material.FIRE,
   6: Material.OIL,
+  7: Material.ICE,
+  8: Material.LAVA,
 };
 
 const MATERIAL_META = {
@@ -33,6 +39,8 @@ const MATERIAL_META = {
   [Material.STONE]: { name: "Stone (4)", color: [119, 123, 129], density: 9.0 },
   [Material.FIRE]: { name: "Fire (5)", color: [239, 130, 70], density: 0.6 },
   [Material.OIL]: { name: "Oil (6)", color: [134, 106, 71], density: 2.2 },
+  [Material.ICE]: { name: "Ice (7)", color: [190, 230, 255], density: 9.0 },
+  [Material.LAVA]: { name: "Lava (8)", color: [220, 70, 15], density: 6.0 },
 };
 
 const FLOOR_ROWS = 2;
@@ -483,14 +491,21 @@ function updateOil(x, y, i) {
 }
 
 function updateSmoke(x, y, i) {
-  if (life[i] > 0) {
-    life[i] -= 1;
-  }
+  // Check if smoke is blocked above by stone — if so, freeze life so it persists
+  const blockedByStone =
+    (y === 0 || cells[idx(x, y - 1)] === Material.STONE) &&
+    (!inBounds(x - 1, y - 1) || cells[idx(x - 1, y - 1)] === Material.STONE) &&
+    (!inBounds(x + 1, y - 1) || cells[idx(x + 1, y - 1)] === Material.STONE);
 
-  if (life[i] === 0 && rand() < 0.18) {
-    cells[i] = Material.EMPTY;
-    updated[i] = 1;
-    return;
+  if (!blockedByStone) {
+    if (life[i] > 0) {
+      life[i] -= 1;
+    }
+    if (life[i] === 0 && rand() < 0.18) {
+      cells[i] = Material.EMPTY;
+      updated[i] = 1;
+      return;
+    }
   }
 
   const upY = y - 1;
@@ -594,6 +609,174 @@ function updateFire(x, y, i) {
   updated[i] = 1;
 }
 
+function updateIce(x, y, i) {
+  // Melt when adjacent to fire or lava
+  const neighbors4 = [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y]];
+  for (let n = 0; n < neighbors4.length; n++) {
+    const [nx, ny] = neighbors4[n];
+    if (!inBounds(nx, ny)) continue;
+    const ni = idx(nx, ny);
+    const mat = cells[ni];
+    if ((mat === Material.FIRE || mat === Material.LAVA) && rand() < 0.05) {
+      cells[i] = Material.WATER;
+      life[i] = 0;
+      fireState[i] = 0;
+      updated[i] = 1;
+      return;
+    }
+    // Slowly freeze adjacent water
+    if (mat === Material.WATER && rand() < 0.005) {
+      cells[ni] = Material.ICE;
+      life[ni] = 0;
+      fireState[ni] = 0;
+      updated[ni] = 1;
+    }
+  }
+
+  // Fall straight down
+  const belowY = y + 1;
+  if (belowY < simHeight) {
+    const below = idx(x, belowY);
+    const matBelow = cells[below];
+    if (canDisplace(Material.ICE, matBelow) && matBelow !== Material.FIRE && matBelow !== Material.LAVA && matBelow !== Material.SAND) {
+      if (matBelow === Material.EMPTY) {
+        moveCell(i, below);
+      } else {
+        swapCells(i, below);
+      }
+      return;
+    }
+  }
+
+  // Slide diagonally down
+  const dir = rand() < 0.5 ? -1 : 1;
+  for (let step = 0; step < 2; step++) {
+    const dx = step === 0 ? dir : -dir;
+    const nx = x + dx;
+    const ny = y + 1;
+    if (!inBounds(nx, ny)) continue;
+    const ni = idx(nx, ny);
+    const target = cells[ni];
+    if (canDisplace(Material.ICE, target) && target !== Material.FIRE && target !== Material.LAVA && target !== Material.SAND) {
+      if (target === Material.EMPTY) {
+        moveCell(i, ni);
+      } else {
+        swapCells(i, ni);
+      }
+      return;
+    }
+  }
+
+  updated[i] = 1;
+}
+
+function updateLava(x, y, i) {
+  // React with neighbors
+  const neighbors4 = [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y]];
+  for (let n = 0; n < neighbors4.length; n++) {
+    const [nx, ny] = neighbors4[n];
+    if (!inBounds(nx, ny)) continue;
+    const ni = idx(nx, ny);
+    const mat = cells[ni];
+    if (mat === Material.WATER && rand() < 0.25) {
+      // Lava cools to stone, water turns to steam
+      cells[i] = Material.STONE;
+      life[i] = 0;
+      fireState[i] = 0;
+      cells[ni] = Material.SMOKE;
+      life[ni] = 20 + Math.floor(rand() * 25);
+      fireState[ni] = 0;
+      updated[i] = 1;
+      updated[ni] = 1;
+      return;
+    }
+    if (mat === Material.ICE && rand() < 0.2) {
+      // Ice melts to water, lava cools to stone
+      cells[i] = Material.STONE;
+      life[i] = 0;
+      fireState[i] = 0;
+      cells[ni] = Material.WATER;
+      life[ni] = 0;
+      fireState[ni] = 0;
+      updated[i] = 1;
+      updated[ni] = 1;
+      return;
+    }
+    if (mat === Material.OIL && rand() < 0.15) {
+      igniteOilWithFlames(ni);
+    }
+  }
+
+  // Occasionally emit smoke above
+  if (y > 0 && rand() < 0.025) {
+    const up = idx(x, y - 1);
+    if (cells[up] === Material.EMPTY) {
+      cells[up] = Material.SMOKE;
+      life[up] = 14 + Math.floor(rand() * 18);
+      fireState[up] = 0;
+      updated[up] = 1;
+    }
+  }
+
+  // Flow downward (viscous — high settle chance)
+  const belowY = y + 1;
+  if (belowY < simHeight) {
+    const below = idx(x, belowY);
+    const matBelow = cells[below];
+    if (matBelow === Material.EMPTY || matBelow === Material.SMOKE || matBelow === Material.FIRE) {
+      moveCell(i, below);
+      return;
+    }
+    if (matBelow === Material.WATER || matBelow === Material.OIL || matBelow === Material.SAND) {
+      swapCells(i, below);
+      return;
+    }
+  }
+
+  if (rand() < 0.55) {
+    updated[i] = 1;
+    return;
+  }
+
+  // Spread diagonally down
+  const dir = rand() < 0.5 ? -1 : 1;
+  for (let step = 0; step < 2; step++) {
+    const dx = step === 0 ? dir : -dir;
+    const nx = x + dx;
+    const ny = y + 1;
+    if (!inBounds(nx, ny)) continue;
+    const ni = idx(nx, ny);
+    const target = cells[ni];
+    if (target === Material.EMPTY || target === Material.SMOKE || target === Material.WATER || target === Material.OIL || target === Material.SAND) {
+      if (target === Material.EMPTY) {
+        moveCell(i, ni);
+      } else {
+        swapCells(i, ni);
+      }
+      return;
+    }
+  }
+
+  // Spread laterally
+  for (let step = 0; step < 2; step++) {
+    const dx = step === 0 ? dir : -dir;
+    const nx = x + dx;
+    if (!inBounds(nx, y)) continue;
+    const ni = idx(nx, y);
+    const target = cells[ni];
+    if (target === Material.EMPTY || target === Material.WATER || target === Material.OIL || target === Material.SAND) {
+      if (target === Material.EMPTY) {
+        moveCell(i, ni);
+      } else {
+        swapCells(i, ni);
+      }
+      return;
+    }
+  }
+
+  updated[i] = 1;
+}
+
 function updateCell(x, y, i) {
   const mat = cells[i];
   if (mat === Material.EMPTY || updated[i]) {
@@ -618,6 +801,12 @@ function updateCell(x, y, i) {
       break;
     case Material.OIL:
       updateOil(x, y, i);
+      break;
+    case Material.ICE:
+      updateIce(x, y, i);
+      break;
+    case Material.LAVA:
+      updateLava(x, y, i);
       break;
     default:
       updated[i] = 1;
@@ -666,10 +855,10 @@ function drawCircle(cx, cy, radius, material) {
       }
       const i = idx(x, y);
       const previousMaterial = cells[i];
-      if ((material === Material.WATER || material === Material.OIL || material === Material.SAND) && cells[i] === Material.STONE) {
+      if ((material === Material.WATER || material === Material.OIL || material === Material.SAND || material === Material.ICE) && (cells[i] === Material.STONE || cells[i] === Material.ICE || cells[i] === Material.LAVA)) {
         continue;
       }
-      if (material === Material.SMOKE && (cells[i] === Material.STONE || cells[i] === Material.WATER || cells[i] === Material.OIL || cells[i] === Material.SAND)) {
+      if (material === Material.SMOKE && (cells[i] === Material.STONE || cells[i] === Material.WATER || cells[i] === Material.OIL || cells[i] === Material.SAND || cells[i] === Material.ICE || cells[i] === Material.LAVA)) {
         continue;
       }
       if (material === Material.SAND && (cells[i] === Material.WATER || cells[i] === Material.OIL)) {
@@ -767,6 +956,16 @@ function render() {
       r += shimmer;
       g += shimmer;
       b += shimmer;
+    } else if (mat === Material.ICE) {
+      const glint = (rand() - 0.5) * 14;
+      r += glint * 0.4;
+      g += glint * 0.6;
+      b += glint;
+    } else if (mat === Material.LAVA) {
+      const flicker = 0.8 + rand() * 0.4;
+      r = clamp((r * 1.1 * flicker) | 0, 0, 255);
+      g = clamp((g * 0.6 * flicker + rand() * 20) | 0, 0, 255);
+      b = clamp((b * 0.3) | 0, 0, 255);
     }
 
     frameData[p] = clamp(r | 0, 0, 255);
@@ -988,70 +1187,50 @@ function playFireSizzleSound() {
   playNoiseLayer("bandpass", 2400, 1.4, 0.0035, 0.003, 0.08);
 }
 
+function playIcePlaceSound() {
+  // Crisp crinkle — audible mid-high range
+  playNoiseLayer("bandpass", 1800, 1.6, 0.030, 0.004, 0.10);
+  playNoiseLayer("highpass", 2600, 1.0, 0.018, 0.003, 0.08);
+}
+
+function playLavaPlaceSound() {
+  // Thick bubbling — mid-range so laptop speakers can reproduce it
+  playNoiseLayer("bandpass", 420, 1.2, 0.035, 0.015, 0.22);
+  playNoiseLayer("lowpass", 650, 0.8, 0.020, 0.012, 0.18);
+}
+
+function playSmokePlaceSound() {
+  // Airy whoosh
+  playNoiseLayer("bandpass", 700, 0.6, 0.028, 0.010, 0.15);
+  playNoiseLayer("highpass", 1100, 0.7, 0.014, 0.008, 0.12);
+}
+
+function playSandPlaceSound() {
+  // Granular hiss
+  playNoiseLayer("bandpass", 850, 1.1, 0.035, 0.006, 0.09);
+  playNoiseLayer("highpass", 1400, 0.8, 0.016, 0.005, 0.07);
+}
+
+function playStonePlaceSound() {
+  // Dense thud
+  playNoiseLayer("bandpass", 480, 1.8, 0.032, 0.008, 0.11);
+  playNoiseLayer("lowpass", 300, 1.4, 0.018, 0.010, 0.13);
+}
+
 function playBrushAudio(material) {
-  if (!audioCtx) {
-    return;
+  if (!audioCtx || audioCtx.state !== "running") return;
+
+  switch (material) {
+    case Material.WATER:  playWaterPourSound();  break;
+    case Material.OIL:    playOilPourSound();    break;
+    case Material.FIRE:   playFireSizzleSound(); break;
+    case Material.ICE:    playIcePlaceSound();   break;
+    case Material.LAVA:   playLavaPlaceSound();  break;
+    case Material.SMOKE:  playSmokePlaceSound(); break;
+    case Material.SAND:   playSandPlaceSound();  break;
+    case Material.STONE:  playStonePlaceSound(); break;
+    default: break;
   }
-
-  if (audioCtx.state !== "running") {
-    return;
-  }
-
-  if (material === Material.WATER) {
-    playWaterPourSound();
-    return;
-  }
-
-  if (material === Material.OIL) {
-    playOilPourSound();
-    return;
-  }
-
-  if (material === Material.FIRE) {
-    playFireSizzleSound();
-    return;
-  }
-
-  const now = audioCtx.currentTime;
-  const source = audioCtx.createBufferSource();
-  source.buffer = noiseBuffer;
-
-  const filter = audioCtx.createBiquadFilter();
-  filter.type = "bandpass";
-
-  const gain = audioCtx.createGain();
-
-  let freq = 520;
-  let q = 0.9;
-  let volume = 0.013;
-
-  if (material === Material.SAND) {
-    freq = 850;
-    q = 1.1;
-    volume = 0.016;
-  } else if (material === Material.WATER) {
-    freq = 420;
-    q = 0.6;
-    volume = 0.011;
-  } else if (material === Material.STONE) {
-    freq = 250;
-    q = 1.7;
-    volume = 0.009;
-  }
-
-  filter.frequency.setValueAtTime(freq, now);
-  filter.Q.setValueAtTime(q, now);
-
-  gain.gain.setValueAtTime(0, now);
-  gain.gain.linearRampToValueAtTime(volume, now + 0.01);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
-
-  source.connect(filter);
-  filter.connect(gain);
-  gain.connect(audioCtx.destination);
-
-  source.start(now);
-  source.stop(now + 0.1);
 }
 
 function speakMaterialName(name) {
