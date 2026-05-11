@@ -94,16 +94,49 @@ function resize() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.scale(dpr, dpr);
 
+  const oldWidth = simWidth;
+  const oldHeight = simHeight;
+  const oldCells = cells;
+  const oldLife = life;
+  const oldFireState = fireState;
+
   const w = Math.floor(window.innerWidth);
   const h = Math.floor(window.innerHeight);
   simScale = w >= 1500 ? 3 : 2;
   simWidth = Math.max(120, Math.floor(w / simScale));
   simHeight = Math.max(80, Math.floor(h / simScale));
 
-  cells = new Uint8Array(simWidth * simHeight);
-  life = new Uint8Array(simWidth * simHeight);
-  fireState = new Uint8Array(simWidth * simHeight);
+  const nextCells = new Uint8Array(simWidth * simHeight);
+  const nextLife = new Uint8Array(simWidth * simHeight);
+  const nextFireState = new Uint8Array(simWidth * simHeight);
   updated = new Uint8Array(simWidth * simHeight);
+
+  if (oldWidth > 0 && oldHeight > 0) {
+    const copyWidth = Math.min(oldWidth, simWidth);
+    const copyHeight = Math.min(oldHeight, simHeight);
+    const srcOffsetX = Math.floor((oldWidth - copyWidth) / 2);
+    const srcOffsetY = Math.floor((oldHeight - copyHeight) / 2);
+    const dstOffsetX = Math.floor((simWidth - copyWidth) / 2);
+    const dstOffsetY = Math.floor((simHeight - copyHeight) / 2);
+
+    for (let y = 0; y < copyHeight; y++) {
+      const srcY = y + srcOffsetY;
+      const dstY = y + dstOffsetY;
+      for (let x = 0; x < copyWidth; x++) {
+        const srcX = x + srcOffsetX;
+        const dstX = x + dstOffsetX;
+        const srcI = srcY * oldWidth + srcX;
+        const dstI = dstY * simWidth + dstX;
+        nextCells[dstI] = oldCells[srcI];
+        nextLife[dstI] = oldLife[srcI];
+        nextFireState[dstI] = oldFireState[srcI];
+      }
+    }
+  }
+
+  cells = nextCells;
+  life = nextLife;
+  fireState = nextFireState;
   frameImage = new ImageData(simWidth, simHeight);
   frameData = frameImage.data;
   renderSurface.width = simWidth;
