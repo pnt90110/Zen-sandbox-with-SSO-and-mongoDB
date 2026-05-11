@@ -633,12 +633,21 @@ function updateIce(x, y, i) {
     }
   }
 
+  // Buoyancy: if submerged, ice rises through water.
+  if (y > 0) {
+    const up = idx(x, y - 1);
+    if (cells[up] === Material.WATER) {
+      swapCells(i, up);
+      return;
+    }
+  }
+
   // Fall straight down
   const belowY = y + 1;
   if (belowY < simHeight) {
     const below = idx(x, belowY);
     const matBelow = cells[below];
-    if (canDisplace(Material.ICE, matBelow) && matBelow !== Material.FIRE && matBelow !== Material.LAVA && matBelow !== Material.SAND) {
+    if (canDisplace(Material.ICE, matBelow) && matBelow !== Material.FIRE && matBelow !== Material.LAVA && matBelow !== Material.SAND && matBelow !== Material.WATER) {
       if (matBelow === Material.EMPTY) {
         moveCell(i, below);
       } else {
@@ -657,7 +666,7 @@ function updateIce(x, y, i) {
     if (!inBounds(nx, ny)) continue;
     const ni = idx(nx, ny);
     const target = cells[ni];
-    if (canDisplace(Material.ICE, target) && target !== Material.FIRE && target !== Material.LAVA && target !== Material.SAND) {
+    if (canDisplace(Material.ICE, target) && target !== Material.FIRE && target !== Material.LAVA && target !== Material.SAND && target !== Material.WATER) {
       if (target === Material.EMPTY) {
         moveCell(i, ni);
       } else {
@@ -1173,13 +1182,15 @@ function playNoiseLayer(type, freq, q, peak, attack, decay) {
 }
 
 function playWaterPourSound() {
-  playNoiseLayer("lowpass", 540, 0.55, 0.010, 0.012, 0.22);
-  playNoiseLayer("bandpass", 320, 0.8, 0.004, 0.01, 0.16);
+  // Liquid splash: low-mid body + light upper texture
+  playNoiseLayer("bandpass", 560, 0.75, 0.018, 0.010, 0.20);
+  playNoiseLayer("highpass", 1350, 0.6, 0.008, 0.008, 0.14);
 }
 
 function playOilPourSound() {
-  playNoiseLayer("lowpass", 300, 0.9, 0.009, 0.014, 0.24);
-  playNoiseLayer("bandpass", 190, 1.2, 0.0035, 0.012, 0.18);
+  // Dark/viscous: deeper, duller than water
+  playNoiseLayer("lowpass", 420, 1.1, 0.020, 0.014, 0.24);
+  playNoiseLayer("bandpass", 980, 1.3, 0.010, 0.012, 0.18);
 }
 
 function playFireSizzleSound() {
@@ -1194,9 +1205,9 @@ function playIcePlaceSound() {
 }
 
 function playLavaPlaceSound() {
-  // Thick bubbling — mid-range so laptop speakers can reproduce it
-  playNoiseLayer("bandpass", 420, 1.2, 0.035, 0.015, 0.22);
-  playNoiseLayer("lowpass", 650, 0.8, 0.020, 0.012, 0.18);
+  // Heavy bubbling: strong low-mid growl + subtle crackle
+  playNoiseLayer("bandpass", 340, 1.15, 0.030, 0.015, 0.24);
+  playNoiseLayer("bandpass", 980, 0.7, 0.010, 0.010, 0.16);
 }
 
 function playSmokePlaceSound() {
