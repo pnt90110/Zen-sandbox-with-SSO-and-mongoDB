@@ -1,0 +1,1028 @@
+const Material = {
+  EMPTY: 0,
+  SAND: 1,
+  WATER: 2,
+  SMOKE: 3,
+  STONE: 4,
+  FIRE: 5,
+  OIL: 6,
+};
+
+const MATERIAL_ORDER = [
+  Material.SAND,
+  Material.WATER,
+  Material.SMOKE,
+  Material.STONE,
+  Material.FIRE,
+  Material.OIL,
+];
+
+const KEY_TO_MATERIAL = {
+  1: Material.SAND,
+  2: Material.WATER,
+  3: Material.SMOKE,
+  4: Material.STONE,
+  5: Material.FIRE,
+  6: Material.OIL,
+};
+
+const MATERIAL_META = {
+  [Material.SAND]: { name: "Sand (1)", color: [215, 191, 126], density: 4.0 },
+  [Material.WATER]: { name: "Water (2)", color: [96, 155, 218], density: 2.6 },
+  [Material.SMOKE]: { name: "Smoke (3)", color: [148, 153, 164], density: 0.4 },
+  [Material.STONE]: { name: "Stone (4)", color: [119, 123, 129], density: 9.0 },
+  [Material.FIRE]: { name: "Fire (5)", color: [239, 130, 70], density: 0.6 },
+  [Material.OIL]: { name: "Oil (6)", color: [134, 106, 71], density: 2.2 },
+};
+
+const FLOOR_ROWS = 2;
+
+const canvas = document.getElementById("sandbox");
+const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+const materialControls = document.getElementById("materialControls");
+const brushSizeInput = document.getElementById("brushSize");
+const brushSizeValue = document.getElementById("brushSizeValue");
+const simSpeedInput = document.getElementById("simSpeed");
+const simSpeedValue = document.getElementById("simSpeedValue");
+const clearBtn = document.getElementById("clearBtn");
+
+let simScale = 2;
+let simWidth = 0;
+let simHeight = 0;
+let cells = new Uint8Array(0);
+let life = new Uint8Array(0);
+let fireState = new Uint8Array(0);
+let updated = new Uint8Array(0);
+let frameImage = null;
+let frameData = null;
+const renderSurface = document.createElement("canvas");
+const renderSurfaceCtx = renderSurface.getContext("2d", { alpha: false });
+let paused = false;
+let activeMaterial = Material.SAND;
+let brushRadius = Number(brushSizeInput.value);
+let speedMultiplier = Number(simSpeedInput.value);
+let pointerDown = false;
+let eraseMode = false;
+let pointerSimX = 0;
+let pointerSimY = 0;
+let prevPaintX = null;
+let prevPaintY = null;
+let frameParity = 0;
+let lastSpokenMaterial = "";
+let lastSpokenAt = 0;
+
+let randSeed = 0x1234abcd;
+function rand() {
+  randSeed ^= randSeed << 13;
+  randSeed ^= randSeed >> 17;
+  randSeed ^= randSeed << 5;
+  return (randSeed >>> 0) / 4294967296;
+}
+
+function idx(x, y) {
+  return y * simWidth + x;
+}
+
+function inBounds(x, y) {
+  return x >= 0 && y >= 0 && x < simWidth && y < simHeight;
+}
+
+function resize() {
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  canvas.width = Math.floor(window.innerWidth * dpr);
+  canvas.height = Math.floor(window.innerHeight * dpr);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+
+  const w = Math.floor(window.innerWidth);
+  const h = Math.floor(window.innerHeight);
+  simScale = w >= 1500 ? 3 : 2;
+  simWidth = Math.max(120, Math.floor(w / simScale));
+  simHeight = Math.max(80, Math.floor(h / simScale));
+
+  cells = new Uint8Array(simWidth * simHeight);
+  life = new Uint8Array(simWidth * simHeight);
+  fireState = new Uint8Array(simWidth * simHeight);
+  updated = new Uint8Array(simWidth * simHeight);
+  frameImage = new ImageData(simWidth, simHeight);
+  frameData = frameImage.data;
+  renderSurface.width = simWidth;
+  renderSurface.height = simHeight;
+  seedFloor();
+}
+
+function seedFloor() {
+  const startY = Math.max(0, simHeight - FLOOR_ROWS);
+  for (let y = startY; y < simHeight; y++) {
+    for (let x = 0; x < simWidth; x++) {
+      const i = idx(x, y);
+      cells[i] = Material.STONE;
+      life[i] = 0;
+      fireState[i] = 0;
+    }
+  }
+}
+
+function moveCell(from, to) {
+  cells[to] = cells[from];
+  life[to] = life[from];
+  fireState[to] = fireState[from];
+  cells[from] = Material.EMPTY;
+  life[from] = 0;
+  fireState[from] = 0;
+  updated[to] = 1;
+  updated[from] = 1;
+}
+
+function swapCells(a, b) {
+  const mat = cells[a];
+  const li = life[a];
+  const fi = fireState[a];
+  cells[a] = cells[b];
+  life[a] = life[b];
+  fireState[a] = fireState[b];
+  cells[b] = mat;
+  life[b] = li;
+  fireState[b] = fi;
+  updated[a] = 1;
+  updated[b] = 1;
+}
+
+function tryWaterPushOilUp(waterIndex, oilIndex, oilX, oilY) {
+  if (oilY <= 0) {
+    return false;
+  }
+
+  const up = idx(oilX, oilY - 1);
+  const upMat = cells[up];
+  if (upMat !== Material.EMPTY && upMat !== Material.SMOKE && upMat !== Material.FIRE) {
+    return false;
+  }
+
+  cells[up] = Material.OIL;
+  life[up] = 0;
+  fireState[up] = 0;
+
+  cells[oilIndex] = Material.WATER;
+  life[oilIndex] = life[waterIndex];
+  fireState[oilIndex] = 0;
+
+  cells[waterIndex] = Material.EMPTY;
+  life[waterIndex] = 0;
+  fireState[waterIndex] = 0;
+
+  updated[up] = 1;
+  updated[oilIndex] = 1;
+  updated[waterIndex] = 1;
+  return true;
+}
+
+function density(mat) {
+  return mat === Material.EMPTY ? 0 : MATERIAL_META[mat].density;
+}
+
+function canDisplace(fromMat, toMat) {
+  if (toMat === Material.STONE) {
+    return false;
+  }
+  return density(fromMat) > density(toMat);
+}
+
+function igniteAt(i) {
+  if (cells[i] === Material.OIL || cells[i] === Material.SMOKE) {
+    cells[i] = Material.FIRE;
+    life[i] = 20 + Math.floor(rand() * 30);
+    fireState[i] = 0;
+    updated[i] = 1;
+  }
+}
+
+function spawnFlameAt(x, y, minLife = 16, maxLife = 32) {
+  if (!inBounds(x, y)) {
+    return;
+  }
+  const i = idx(x, y);
+  const mat = cells[i];
+  if (mat !== Material.EMPTY && mat !== Material.SMOKE) {
+    return;
+  }
+  cells[i] = Material.FIRE;
+  life[i] = minLife + Math.floor(rand() * (maxLife - minLife + 1));
+  fireState[i] = 0;
+  updated[i] = 1;
+}
+
+function igniteOilWithFlames(i) {
+  if (cells[i] !== Material.OIL) {
+    return;
+  }
+
+  igniteAt(i);
+
+  const x = i % simWidth;
+  const y = Math.floor(i / simWidth);
+  spawnFlameAt(x, y - 1, 16, 30);
+  spawnFlameAt(x, y - 2, 12, 24);
+
+  if (rand() < 0.95) {
+    spawnFlameAt(x + (rand() < 0.5 ? -1 : 1), y - 1, 12, 24);
+  }
+
+  if (rand() < 0.8) {
+    spawnFlameAt(x + (rand() < 0.5 ? -1 : 1), y, 10, 20);
+  }
+
+  if (rand() < 0.7) {
+    spawnFlameAt(x + (rand() < 0.5 ? -1 : 1), y - 2, 10, 20);
+  }
+
+  if (rand() < 0.45) {
+    spawnFlameAt(x, y - 3, 8, 16);
+  }
+}
+
+function updateSand(x, y, i) {
+  const belowY = y + 1;
+  if (belowY >= simHeight) {
+    updated[i] = 1;
+    return;
+  }
+
+  const below = idx(x, belowY);
+  const matBelow = cells[below];
+  if (canDisplace(Material.SAND, matBelow) && matBelow !== Material.FIRE) {
+    if (matBelow === Material.EMPTY) {
+      moveCell(i, below);
+    } else {
+      swapCells(i, below);
+    }
+    return;
+  }
+
+  const dir = rand() < 0.5 ? -1 : 1;
+  for (let step = 0; step < 2; step++) {
+    const dx = step === 0 ? dir : -dir;
+    const nx = x + dx;
+    const ny = y + 1;
+    if (!inBounds(nx, ny)) {
+      continue;
+    }
+    const ni = idx(nx, ny);
+    const target = cells[ni];
+    if (canDisplace(Material.SAND, target) && target !== Material.FIRE) {
+      if (target === Material.EMPTY) {
+        moveCell(i, ni);
+      } else {
+        swapCells(i, ni);
+      }
+      return;
+    }
+  }
+
+  updated[i] = 1;
+}
+
+function updateWater(x, y, i) {
+  const downY = y + 1;
+  if (downY < simHeight) {
+    const down = idx(x, downY);
+    const target = cells[down];
+    if (target === Material.EMPTY || target === Material.SMOKE || target === Material.FIRE || target === Material.OIL) {
+      if (target === Material.EMPTY) {
+        moveCell(i, down);
+      } else {
+        swapCells(i, down);
+      }
+      return;
+    }
+  }
+
+  const hasOilAbove =
+    y > 0 &&
+    (cells[idx(x, y - 1)] === Material.OIL ||
+      (x > 0 && cells[idx(x - 1, y - 1)] === Material.OIL) ||
+      (x + 1 < simWidth && cells[idx(x + 1, y - 1)] === Material.OIL));
+  const hasOilSide =
+    (x > 0 && cells[idx(x - 1, y)] === Material.OIL) ||
+    (x + 1 < simWidth && cells[idx(x + 1, y)] === Material.OIL);
+  const cappedByOil = hasOilAbove || hasOilSide;
+  const lateralSpread = cappedByOil ? 9 : 3;
+
+  if (cappedByOil) {
+    const dir = rand() < 0.5 ? -1 : 1;
+    for (let sideTry = 0; sideTry < 2; sideTry++) {
+      const sideDir = sideTry === 0 ? dir : -dir;
+      for (let spread = 1; spread <= lateralSpread; spread++) {
+        const nx = x + sideDir * spread;
+        if (!inBounds(nx, y)) {
+          break;
+        }
+        const ni = idx(nx, y);
+        const target = cells[ni];
+        if (target === Material.EMPTY || target === Material.SMOKE || target === Material.FIRE || target === Material.OIL) {
+          if (target === Material.EMPTY) {
+            moveCell(i, ni);
+          } else if (target === Material.OIL) {
+            if (!tryWaterPushOilUp(i, ni, nx, y)) {
+              swapCells(i, ni);
+            }
+          } else {
+            swapCells(i, ni);
+          }
+          return;
+        }
+        if (target === Material.STONE || target === Material.SAND) {
+          break;
+        }
+      }
+    }
+  }
+
+  const dir = rand() < 0.5 ? -1 : 1;
+  for (let step = 0; step < 2; step++) {
+    const dx = step === 0 ? dir : -dir;
+    const nx = x + dx;
+    const ny = y + 1;
+    if (!inBounds(nx, ny)) {
+      continue;
+    }
+    const ni = idx(nx, ny);
+    const target = cells[ni];
+    if (target === Material.EMPTY || target === Material.SMOKE || target === Material.FIRE) {
+      if (target === Material.EMPTY) {
+        moveCell(i, ni);
+      } else {
+        swapCells(i, ni);
+      }
+      return;
+    }
+  }
+
+  for (let sideTry = 0; sideTry < 2; sideTry++) {
+    const sideDir = sideTry === 0 ? dir : -dir;
+    for (let spread = 1; spread <= lateralSpread; spread++) {
+      const nx = x + sideDir * spread;
+      if (!inBounds(nx, y)) {
+        break;
+      }
+      const ni = idx(nx, y);
+      const target = cells[ni];
+      if (target === Material.EMPTY || target === Material.SMOKE || target === Material.FIRE || target === Material.OIL) {
+        if (target === Material.EMPTY) {
+          moveCell(i, ni);
+        } else if (target === Material.OIL) {
+          if (!tryWaterPushOilUp(i, ni, nx, y)) {
+            swapCells(i, ni);
+          }
+        } else {
+          swapCells(i, ni);
+        }
+        return;
+      }
+      if (target === Material.STONE || target === Material.SAND) {
+        break;
+      }
+    }
+  }
+
+  updated[i] = 1;
+}
+
+function updateOil(x, y, i) {
+  const downY = y + 1;
+  let floatingOnWater = false;
+  if (downY < simHeight) {
+    const down = idx(x, downY);
+    const target = cells[down];
+    if (target === Material.EMPTY || target === Material.SMOKE) {
+      if (target === Material.EMPTY) {
+        moveCell(i, down);
+      } else {
+        swapCells(i, down);
+      }
+      return;
+    }
+    floatingOnWater = target === Material.WATER;
+  }
+
+  const settleChance = floatingOnWater ? 0.16 : 0.58;
+  if (rand() < settleChance) {
+    updated[i] = 1;
+    return;
+  }
+
+  const dir = rand() < 0.5 ? -1 : 1;
+  const lateralSpread = floatingOnWater ? 4 : 2;
+  for (let sideTry = 0; sideTry < 2; sideTry++) {
+    const sideDir = sideTry === 0 ? dir : -dir;
+    for (let spread = 1; spread <= lateralSpread; spread++) {
+      const nx = x + sideDir * spread;
+      if (!inBounds(nx, y)) {
+        break;
+      }
+      const ni = idx(nx, y);
+      const target = cells[ni];
+
+      if (target === Material.EMPTY || target === Material.SMOKE) {
+        let supportOk = true;
+        if (floatingOnWater && y + 1 < simHeight) {
+          const belowSide = cells[idx(nx, y + 1)];
+          supportOk = belowSide === Material.WATER || belowSide === Material.OIL || belowSide === Material.STONE || belowSide === Material.SAND;
+        }
+
+        if (supportOk) {
+          if (target === Material.EMPTY) {
+            moveCell(i, ni);
+          } else {
+            swapCells(i, ni);
+          }
+          return;
+        }
+      }
+
+      if (target === Material.STONE || target === Material.SAND) {
+        break;
+      }
+    }
+  }
+
+  updated[i] = 1;
+}
+
+function updateSmoke(x, y, i) {
+  if (life[i] > 0) {
+    life[i] -= 1;
+  }
+
+  if (life[i] === 0 && rand() < 0.18) {
+    cells[i] = Material.EMPTY;
+    updated[i] = 1;
+    return;
+  }
+
+  const upY = y - 1;
+  if (upY >= 0) {
+    const up = idx(x, upY);
+    const target = cells[up];
+    if (target === Material.EMPTY || target === Material.FIRE) {
+      moveCell(i, up);
+      return;
+    }
+  }
+
+  const dir = rand() < 0.5 ? -1 : 1;
+  for (let step = 0; step < 2; step++) {
+    const nx = x + (step === 0 ? dir : -dir);
+    if (!inBounds(nx, y - 1)) {
+      continue;
+    }
+    const ni = idx(nx, y - 1);
+    const target = cells[ni];
+    if (target === Material.EMPTY || target === Material.FIRE) {
+      moveCell(i, ni);
+      return;
+    }
+  }
+
+  updated[i] = 1;
+}
+
+function updateFire(x, y, i) {
+  if (life[i] > 0) {
+    life[i] -= 1;
+  }
+
+  if (y + 1 < simHeight) {
+    const below = idx(x, y + 1);
+    if (cells[below] === Material.WATER) {
+      cells[i] = Material.SMOKE;
+      life[i] = 22 + Math.floor(rand() * 20);
+      fireState[i] = 0;
+      updated[i] = 1;
+      return;
+    }
+  }
+
+  const wetFire = fireState[i] === 1;
+
+  const neighbors = [
+    [x, y - 1],
+    [x + 1, y],
+    [x - 1, y],
+    [x, y + 1],
+    [x + 1, y - 1],
+    [x - 1, y - 1],
+  ];
+
+  for (let n = 0; n < neighbors.length; n++) {
+    const [nx, ny] = neighbors[n];
+    if (!inBounds(nx, ny)) {
+      continue;
+    }
+    const ni = idx(nx, ny);
+    if (!wetFire && cells[ni] === Material.OIL && rand() < 0.3) {
+      igniteOilWithFlames(ni);
+    }
+    if (cells[ni] === Material.WATER && rand() < 0.35) {
+      cells[ni] = Material.SMOKE;
+      life[ni] = 12 + Math.floor(rand() * 18);
+      fireState[ni] = 0;
+      updated[ni] = 1;
+    }
+  }
+
+  if (life[i] === 0) {
+    cells[i] = Material.SMOKE;
+    life[i] = 25 + Math.floor(rand() * 35);
+    fireState[i] = 0;
+    updated[i] = 1;
+    return;
+  }
+
+  if (y > 0 && rand() < 0.28) {
+    const up = idx(x, y - 1);
+    if (cells[up] === Material.EMPTY || cells[up] === Material.SMOKE) {
+      moveCell(i, up);
+      return;
+    }
+  }
+
+  if (rand() < 0.08) {
+    const side = x + (rand() < 0.5 ? -1 : 1);
+    if (inBounds(side, y)) {
+      const si = idx(side, y);
+      if (cells[si] === Material.EMPTY) {
+        moveCell(i, si);
+        return;
+      }
+    }
+  }
+
+  updated[i] = 1;
+}
+
+function updateCell(x, y, i) {
+  const mat = cells[i];
+  if (mat === Material.EMPTY || updated[i]) {
+    return;
+  }
+
+  switch (mat) {
+    case Material.SAND:
+      updateSand(x, y, i);
+      break;
+    case Material.WATER:
+      updateWater(x, y, i);
+      break;
+    case Material.SMOKE:
+      updateSmoke(x, y, i);
+      break;
+    case Material.STONE:
+      updated[i] = 1;
+      break;
+    case Material.FIRE:
+      updateFire(x, y, i);
+      break;
+    case Material.OIL:
+      updateOil(x, y, i);
+      break;
+    default:
+      updated[i] = 1;
+      break;
+  }
+}
+
+function simulationStep() {
+  updated.fill(0);
+
+  const reverseX = frameParity % 2 === 0;
+  frameParity += 1;
+
+  for (let y = simHeight - 1; y >= 0; y--) {
+    if (reverseX) {
+      for (let x = simWidth - 1; x >= 0; x--) {
+        const i = idx(x, y);
+        updateCell(x, y, i);
+      }
+    } else {
+      for (let x = 0; x < simWidth; x++) {
+        const i = idx(x, y);
+        updateCell(x, y, i);
+      }
+    }
+  }
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function drawCircle(cx, cy, radius, material) {
+  const r2 = radius * radius;
+  const xMin = clamp(Math.floor(cx - radius), 0, simWidth - 1);
+  const xMax = clamp(Math.ceil(cx + radius), 0, simWidth - 1);
+  const yMin = clamp(Math.floor(cy - radius), 0, simHeight - 1);
+  const yMax = clamp(Math.ceil(cy + radius), 0, simHeight - 1);
+
+  for (let y = yMin; y <= yMax; y++) {
+    const dy = y - cy;
+    for (let x = xMin; x <= xMax; x++) {
+      const dx = x - cx;
+      if (dx * dx + dy * dy > r2) {
+        continue;
+      }
+      const i = idx(x, y);
+      const previousMaterial = cells[i];
+      if ((material === Material.WATER || material === Material.OIL) && cells[i] === Material.STONE) {
+        continue;
+      }
+      if (material === Material.SMOKE && (cells[i] === Material.STONE || cells[i] === Material.WATER || cells[i] === Material.OIL || cells[i] === Material.SAND)) {
+        continue;
+      }
+      if (material === Material.FIRE && previousMaterial === Material.WATER) {
+        cells[i] = Material.SMOKE;
+        life[i] = 26 + Math.floor(rand() * 18);
+        fireState[i] = 0;
+        continue;
+      }
+      cells[i] = material;
+      if (material === Material.FIRE) {
+        life[i] = 20 + Math.floor(rand() * 30);
+        fireState[i] = previousMaterial === Material.OIL ? 0 : 1;
+      } else if (material === Material.SMOKE) {
+        life[i] = 30 + Math.floor(rand() * 40);
+        fireState[i] = 0;
+      } else {
+        life[i] = 0;
+        fireState[i] = 0;
+      }
+    }
+  }
+}
+
+function paintLine(x0, y0, x1, y1, radius, material) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const steps = Math.max(Math.abs(dx), Math.abs(dy), 1);
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const px = Math.round(x0 + dx * t);
+    const py = Math.round(y0 + dy * t);
+    drawCircle(px, py, radius, material);
+  }
+}
+
+function clearAll() {
+  cells.fill(Material.EMPTY);
+  life.fill(0);
+  fireState.fill(0);
+  seedFloor();
+}
+
+function render() {
+  for (let i = 0; i < cells.length; i++) {
+    const mat = cells[i];
+    const p = i * 4;
+    if (mat === Material.EMPTY) {
+      frameData[p] = 15;
+      frameData[p + 1] = 23;
+      frameData[p + 2] = 28;
+      frameData[p + 3] = 255;
+      continue;
+    }
+
+    const base = MATERIAL_META[mat].color;
+    let r = base[0];
+    let g = base[1];
+    let b = base[2];
+
+    if (mat === Material.WATER) {
+      const jitter = (rand() - 0.5) * 10;
+      r += jitter;
+      g += jitter;
+      b += 10 + jitter;
+    } else if (mat === Material.SMOKE) {
+      const fade = Math.min(1, (life[i] + 20) / 60);
+      r *= fade;
+      g *= fade;
+      b *= fade;
+    } else if (mat === Material.FIRE) {
+      const flicker = 0.75 + rand() * 0.45;
+      r *= 1.1 * flicker;
+      g *= 0.95 * flicker;
+      b *= 0.8 * flicker;
+    } else if (mat === Material.OIL) {
+      const shimmer = (rand() - 0.5) * 7;
+      r += shimmer;
+      g += shimmer;
+      b += shimmer;
+    }
+
+    frameData[p] = clamp(r | 0, 0, 255);
+    frameData[p + 1] = clamp(g | 0, 0, 255);
+    frameData[p + 2] = clamp(b | 0, 0, 255);
+    frameData[p + 3] = 255;
+  }
+
+  const w = Math.floor(window.innerWidth);
+  const h = Math.floor(window.innerHeight);
+  const scaleX = w / simWidth;
+  const scaleY = h / simHeight;
+
+  ctx.imageSmoothingEnabled = false;
+  renderSurfaceCtx.putImageData(frameImage, 0, 0);
+  ctx.drawImage(renderSurface, 0, 0, simWidth * scaleX, simHeight * scaleY);
+
+  if (pointerDown) {
+    const brushPx = brushRadius * scaleX;
+    ctx.beginPath();
+    ctx.arc(pointerSimX * scaleX, pointerSimY * scaleY, brushPx, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(178, 236, 210, 0.5)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+}
+
+function animationLoop() {
+  if (!paused) {
+    for (let i = 0; i < speedMultiplier; i++) {
+      simulationStep();
+    }
+  }
+  render();
+  requestAnimationFrame(animationLoop);
+}
+
+function updatePointerFromEvent(event) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width;
+  const y = (event.clientY - rect.top) / rect.height;
+  pointerSimX = clamp(Math.floor(x * simWidth), 0, simWidth - 1);
+  pointerSimY = clamp(Math.floor(y * simHeight), 0, simHeight - 1);
+}
+
+function paintFromPointer() {
+  const targetMaterial = eraseMode ? Material.EMPTY : activeMaterial;
+  if (prevPaintX == null || prevPaintY == null) {
+    drawCircle(pointerSimX, pointerSimY, brushRadius, targetMaterial);
+  } else {
+    paintLine(prevPaintX, prevPaintY, pointerSimX, pointerSimY, brushRadius, targetMaterial);
+  }
+  prevPaintX = pointerSimX;
+  prevPaintY = pointerSimY;
+  playBrushAudio(targetMaterial);
+}
+
+function makeMaterialButton(mat) {
+  const btn = document.createElement("button");
+  btn.textContent = MATERIAL_META[mat].name;
+  btn.dataset.mat = String(mat);
+  btn.title = `${MATERIAL_META[mat].name} (${MATERIAL_ORDER.indexOf(mat) + 1})`;
+  btn.addEventListener("click", () => {
+    activeMaterial = mat;
+    refreshMaterialSelection();
+    speakMaterialName(MATERIAL_META[mat].name);
+  });
+  btn.addEventListener("mouseenter", () => {
+    speakMaterialName(MATERIAL_META[mat].name);
+  });
+  return btn;
+}
+
+function refreshMaterialSelection() {
+  const buttons = materialControls.querySelectorAll("button");
+  buttons.forEach((btn) => {
+    const mat = Number(btn.dataset.mat);
+    btn.classList.toggle("active", mat === activeMaterial);
+  });
+}
+
+MATERIAL_ORDER.forEach((mat) => {
+  materialControls.appendChild(makeMaterialButton(mat));
+});
+refreshMaterialSelection();
+
+brushSizeInput.addEventListener("input", () => {
+  brushRadius = Number(brushSizeInput.value);
+  brushSizeValue.textContent = String(brushRadius);
+});
+
+simSpeedInput.addEventListener("input", () => {
+  speedMultiplier = Number(simSpeedInput.value);
+  simSpeedValue.textContent = String(speedMultiplier);
+});
+
+clearBtn.addEventListener("click", () => {
+  clearAll();
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.code === "Space") {
+    event.preventDefault();
+    paused = !paused;
+    return;
+  }
+
+  if (event.target instanceof HTMLInputElement) {
+    return;
+  }
+
+  const mat = KEY_TO_MATERIAL[event.key];
+  if (mat != null) {
+    activeMaterial = mat;
+    refreshMaterialSelection();
+    speakMaterialName(MATERIAL_META[mat].name);
+  }
+});
+
+canvas.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+});
+
+canvas.addEventListener("pointerdown", async (event) => {
+  canvas.setPointerCapture(event.pointerId);
+  pointerDown = true;
+  eraseMode = event.button === 2;
+  updatePointerFromEvent(event);
+  prevPaintX = null;
+  prevPaintY = null;
+  await ensureAudioRunning();
+  paintFromPointer();
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  updatePointerFromEvent(event);
+  if (pointerDown) {
+    paintFromPointer();
+  }
+});
+
+canvas.addEventListener("pointerup", () => {
+  pointerDown = false;
+  prevPaintX = null;
+  prevPaintY = null;
+});
+
+canvas.addEventListener("pointerleave", () => {
+  if (!pointerDown) {
+    prevPaintX = null;
+    prevPaintY = null;
+  }
+});
+
+let audioCtx = null;
+let noiseBuffer = null;
+
+function ensureAudio() {
+  if (audioCtx) {
+    return;
+  }
+  audioCtx = new AudioContext({ latencyHint: "interactive" });
+  noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.12, audioCtx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) {
+    data[i] = (Math.random() * 2 - 1) * 0.7;
+  }
+}
+
+async function ensureAudioRunning() {
+  ensureAudio();
+  if (!audioCtx) {
+    return;
+  }
+  if (audioCtx.state !== "running") {
+    try {
+      await audioCtx.resume();
+    } catch {
+      // Ignore resume failure; play path below will safely no-op.
+    }
+  }
+}
+
+function playNoiseLayer(type, freq, q, peak, attack, decay) {
+  const now = audioCtx.currentTime;
+  const source = audioCtx.createBufferSource();
+  source.buffer = noiseBuffer;
+
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = type;
+  filter.frequency.setValueAtTime(freq, now);
+  filter.Q.setValueAtTime(q, now);
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.linearRampToValueAtTime(peak, now + attack);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + decay);
+
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  source.start(now);
+  source.stop(now + decay + 0.04);
+}
+
+function playWaterPourSound() {
+  playNoiseLayer("lowpass", 540, 0.55, 0.010, 0.012, 0.22);
+  playNoiseLayer("bandpass", 320, 0.8, 0.004, 0.01, 0.16);
+}
+
+function playOilPourSound() {
+  playNoiseLayer("lowpass", 300, 0.9, 0.009, 0.014, 0.24);
+  playNoiseLayer("bandpass", 190, 1.2, 0.0035, 0.012, 0.18);
+}
+
+function playFireSizzleSound() {
+  playNoiseLayer("highpass", 1700, 0.9, 0.007, 0.004, 0.11);
+  playNoiseLayer("bandpass", 2400, 1.4, 0.0035, 0.003, 0.08);
+}
+
+function playBrushAudio(material) {
+  if (!audioCtx) {
+    return;
+  }
+
+  if (audioCtx.state !== "running") {
+    return;
+  }
+
+  if (material === Material.WATER) {
+    playWaterPourSound();
+    return;
+  }
+
+  if (material === Material.OIL) {
+    playOilPourSound();
+    return;
+  }
+
+  if (material === Material.FIRE) {
+    playFireSizzleSound();
+    return;
+  }
+
+  const now = audioCtx.currentTime;
+  const source = audioCtx.createBufferSource();
+  source.buffer = noiseBuffer;
+
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = "bandpass";
+
+  const gain = audioCtx.createGain();
+
+  let freq = 520;
+  let q = 0.9;
+  let volume = 0.013;
+
+  if (material === Material.SAND) {
+    freq = 850;
+    q = 1.1;
+    volume = 0.016;
+  } else if (material === Material.WATER) {
+    freq = 420;
+    q = 0.6;
+    volume = 0.011;
+  } else if (material === Material.STONE) {
+    freq = 250;
+    q = 1.7;
+    volume = 0.009;
+  }
+
+  filter.frequency.setValueAtTime(freq, now);
+  filter.Q.setValueAtTime(q, now);
+
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(volume, now + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  source.start(now);
+  source.stop(now + 0.1);
+}
+
+function speakMaterialName(name) {
+  if (!("speechSynthesis" in window)) {
+    return;
+  }
+
+  const now = performance.now();
+  if (name === lastSpokenMaterial && now - lastSpokenAt < 350) {
+    return;
+  }
+  lastSpokenMaterial = name;
+  lastSpokenAt = now;
+
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(name);
+  utterance.rate = 0.92;
+  utterance.pitch = 1.0;
+  utterance.volume = 0.9;
+  window.speechSynthesis.speak(utterance);
+}
+
+resize();
+window.addEventListener("resize", resize);
+animationLoop();
