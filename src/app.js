@@ -674,13 +674,18 @@ function drawCircle(cx, cy, radius, material) {
       }
       if (material === Material.SAND && (cells[i] === Material.WATER || cells[i] === Material.OIL)) {
         const displaced = cells[i];
-        // try to push the displaced fluid up one cell
-        if (y > 0) {
-          const above = idx(x, y - 1);
-          if (cells[above] === Material.EMPTY) {
-            cells[above] = displaced;
-            life[above] = 0;
-            fireState[above] = 0;
+        // scan upward to find the first empty cell and push fluid there
+        let pushed = false;
+        for (let uy = y - 1; uy >= 0; uy--) {
+          const uIdx = idx(x, uy);
+          if (cells[uIdx] === Material.EMPTY) {
+            cells[uIdx] = displaced;
+            life[uIdx] = 0;
+            fireState[uIdx] = 0;
+            pushed = true;
+            break;
+          } else if (cells[uIdx] !== Material.WATER && cells[uIdx] !== Material.OIL) {
+            break; // blocked by solid or other material
           }
         }
         // place sand regardless
