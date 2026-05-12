@@ -1222,7 +1222,10 @@ function drawCircle(cx, cy, radius, material) {
       }
       const i = idx(x, y);
       const previousMaterial = cells[i];
-      if ((material === Material.WATER || material === Material.OIL || material === Material.SAND || material === Material.ICE) && (cells[i] === Material.STONE || cells[i] === Material.ICE || cells[i] === Material.LAVA)) {
+      if ((material === Material.OIL || material === Material.SAND || material === Material.ICE) && (cells[i] === Material.STONE || cells[i] === Material.ICE || cells[i] === Material.LAVA)) {
+        continue;
+      }
+      if (material === Material.WATER && (cells[i] === Material.STONE || cells[i] === Material.LAVA)) {
         continue;
       }
       if (material === Material.SMOKE && (cells[i] === Material.STONE || cells[i] === Material.WATER || cells[i] === Material.OIL || cells[i] === Material.SAND || cells[i] === Material.ICE || cells[i] === Material.LAVA)) {
