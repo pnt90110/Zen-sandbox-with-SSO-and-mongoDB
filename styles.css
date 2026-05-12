@@ -96,6 +96,18 @@ button.ghost {
   width: 100%;
 }
 
+.button-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.button-row button {
+  margin-top: 0;
+  width: 100%;
+}
+
 .slider-row {
   display: grid;
   grid-template-columns: 70px 1fr 34px;

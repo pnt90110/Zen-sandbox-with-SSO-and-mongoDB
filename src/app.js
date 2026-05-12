@@ -53,6 +53,7 @@ const brushSizeValue = document.getElementById("brushSizeValue");
 const simSpeedInput = document.getElementById("simSpeed");
 const simSpeedValue = document.getElementById("simSpeedValue");
 const clearBtn = document.getElementById("clearBtn");
+const muteBtn = document.getElementById("muteBtn");
 
 let simScale = 2;
 let simWidth = 0;
@@ -66,6 +67,7 @@ let frameData = null;
 const renderSurface = document.createElement("canvas");
 const renderSurfaceCtx = renderSurface.getContext("2d", { alpha: false });
 let paused = false;
+let isMuted = false;
 let activeMaterial = Material.SAND;
 let brushRadius = Number(brushSizeInput.value);
 let speedMultiplier = Number(simSpeedInput.value);
@@ -1099,6 +1101,11 @@ clearBtn.addEventListener("click", () => {
   clearAll();
 });
 
+muteBtn.addEventListener("click", () => {
+  isMuted = !isMuted;
+  muteBtn.textContent = isMuted ? "🔇 Sound is Off" : "🔊 Sound is On";
+});
+
 window.addEventListener("keydown", (event) => {
   if (event.code === "Space") {
     event.preventDefault();
@@ -1183,6 +1190,8 @@ async function ensureAudioRunning() {
 }
 
 function playNoiseLayer(type, freq, q, peak, attack, decay) {
+  if (isMuted) return;
+  
   const now = audioCtx.currentTime;
   const source = audioCtx.createBufferSource();
   source.buffer = noiseBuffer;
