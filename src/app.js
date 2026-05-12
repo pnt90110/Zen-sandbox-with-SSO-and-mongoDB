@@ -134,7 +134,7 @@ function sampleCellAt(x, y) {
 }
 
 function isBallBlockingMaterial(mat) {
-  return mat === Material.SAND || mat === Material.STONE;
+  return mat === Material.SAND || mat === Material.STONE || mat === Material.LAVA;
 }
 
 function ballTouchesBlocking(x, y, radius) {
@@ -183,6 +183,34 @@ function ballWaterRatio(x, y, radius) {
   return waterCount / samples.length;
 }
 
+function clearBallFootprint(ball) {
+  if (!ball) {
+    return;
+  }
+
+  const xMin = clamp(Math.floor(ball.x - ball.r), 0, simWidth - 1);
+  const xMax = clamp(Math.floor(ball.x + ball.r), 0, simWidth - 1);
+  const yMin = clamp(Math.floor(ball.y - ball.r), 0, simHeight - 1);
+  const yMax = clamp(Math.floor(ball.y + ball.r), 0, simHeight - 1);
+
+  for (let y = yMin; y <= yMax; y++) {
+    for (let x = xMin; x <= xMax; x++) {
+      const dx = x + 0.5 - ball.x;
+      const dy = y + 0.5 - ball.y;
+      if (dx * dx + dy * dy > ball.r * ball.r) {
+        continue;
+      }
+      const i = idx(x, y);
+      cells[i] = Material.EMPTY;
+      life[i] = 0;
+      fireState[i] = 0;
+      waterSideAttempts[i] = 0;
+      waterSleepVersion[i] = 0;
+      updated[i] = 1;
+    }
+  }
+}
+
 function spawnSingleBall(x, y) {
   if (!inBounds(x, y)) {
     return false;
@@ -206,7 +234,8 @@ function spawnSingleBall(x, y) {
   }
 
   if (activeBalls.length >= MAX_BALLS) {
-    activeBalls.shift();
+    const removedBall = activeBalls.shift();
+    clearBallFootprint(removedBall);
   }
   activeBalls.push(candidate);
   return true;
