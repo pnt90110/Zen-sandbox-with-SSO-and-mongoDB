@@ -8,6 +8,7 @@ const Material = {
   OIL: 6,
   ICE: 7,
   LAVA: 8,
+  BALL: 9,
 };
 
 const MATERIAL_ORDER = [
@@ -19,6 +20,7 @@ const MATERIAL_ORDER = [
   Material.OIL,
   Material.ICE,
   Material.LAVA,
+  Material.BALL,
 ];
 
 const KEY_TO_MATERIAL = {
@@ -30,6 +32,7 @@ const KEY_TO_MATERIAL = {
   6: Material.OIL,
   7: Material.ICE,
   8: Material.LAVA,
+  9: Material.BALL,
 };
 
 const MATERIAL_META = {
@@ -41,6 +44,7 @@ const MATERIAL_META = {
   [Material.OIL]: { name: "Oil (6)", color: [134, 106, 71], density: 2.2 },
   [Material.ICE]: { name: "Ice (7)", color: [190, 230, 255], density: 9.0 },
   [Material.LAVA]: { name: "Lava (8)", color: [220, 70, 15], density: 6.0 },
+  [Material.BALL]: { name: "Ball (9)", color: [255, 80, 100], density: 5.5 },
 };
 
 const FLOOR_ROWS = 2;
@@ -64,6 +68,8 @@ let simHeight = 0;
 let cells = new Uint8Array(0);
 let life = new Uint8Array(0);
 let fireState = new Uint8Array(0);
+let waterSideAttempts = new Uint8Array(0);
+let waterSleepVersion = new Uint16Array(0);
 let updated = new Uint8Array(0);
 let frameImage = null;
 let frameData = null;
@@ -83,6 +89,16 @@ let prevPaintY = null;
 let frameParity = 0;
 let lastSpokenMaterial = "";
 let lastSpokenAt = 0;
+let activeBalls = [];
+
+const BALL_RADIUS = 4;
+const BALL_GRAVITY = 0.16;
+const BALL_BOUNCE = 0.55;
+const MAX_BALLS = 7;
+const WATER_MAX_SIDE_ATTEMPTS = 7;
+const WATER_IDLE_FREEZE_MS = 8000;
+let waterWakeVersion = 1;
+let lastDrawActivityAt = performance.now();
 
 let randSeed = 0x1234abcd;
 function rand() {
@@ -98,6 +114,205 @@ function idx(x, y) {
 
 function inBounds(x, y) {
   return x >= 0 && y >= 0 && x < simWidth && y < simHeight;
+}
+
+function signalWaterWake() {
+  lastDrawActivityAt = performance.now();
+  waterWakeVersion = (waterWakeVersion + 1) & 0xffff;
+  if (waterWakeVersion === 0) {
+    waterWakeVersion = 1;
+  }
+}
+
+function sampleCellAt(x, y) {
+  const cx = Math.floor(x);
+  const cy = Math.floor(y);
+  if (!inBounds(cx, cy)) {
+    return Material.STONE;
+  }
+  return cells[idx(cx, cy)];
+}
+
+function isBallBlockingMaterial(mat) {
+  return mat === Material.SAND || mat === Material.STONE;
+}
+
+function ballTouchesBlocking(x, y, radius) {
+  const xMin = Math.floor(x - radius);
+  const xMax = Math.floor(x + radius);
+  const yMin = Math.floor(y - radius);
+  const yMax = Math.floor(y + radius);
+
+  for (let cy = yMin; cy <= yMax; cy++) {
+    for (let cx = xMin; cx <= xMax; cx++) {
+      if (!inBounds(cx, cy)) {
+        return true;
+      }
+      const dx = cx + 0.5 - x;
+      const dy = cy + 0.5 - y;
+      if (dx * dx + dy * dy > radius * radius) {
+        continue;
+      }
+      const mat = cells[idx(cx, cy)];
+      if (isBallBlockingMaterial(mat)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function ballWaterRatio(x, y, radius) {
+  const samples = [
+    [0, radius * 0.8],
+    [-radius * 0.35, radius * 0.55],
+    [radius * 0.35, radius * 0.55],
+    [0, radius * 0.3],
+    [0, 0],
+  ];
+
+  let waterCount = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const [sx, sy] = samples[i];
+    if (sampleCellAt(x + sx, y + sy) === Material.WATER) {
+      waterCount += 1;
+    }
+  }
+
+  return waterCount / samples.length;
+}
+
+function spawnSingleBall(x, y) {
+  if (!inBounds(x, y)) {
+    return false;
+  }
+
+  const spawnMaterial = cells[idx(x, y)];
+  if (spawnMaterial === Material.SAND || spawnMaterial === Material.STONE) {
+    return false;
+  }
+
+  const candidate = {
+    x: x + 0.5,
+    y: y + 0.5,
+    vx: 0,
+    vy: 0,
+    r: BALL_RADIUS,
+  };
+
+  if (ballTouchesBlocking(candidate.x, candidate.y, candidate.r)) {
+    return false;
+  }
+
+  if (activeBalls.length >= MAX_BALLS) {
+    activeBalls.shift();
+  }
+  activeBalls.push(candidate);
+  return true;
+}
+
+function moveBallAxis(ball, axis, delta) {
+  if (!ball || delta === 0) {
+    return;
+  }
+
+  const steps = Math.max(1, Math.ceil(Math.abs(delta) / 0.25));
+  const step = delta / steps;
+
+  for (let i = 0; i < steps; i++) {
+    const nx = axis === "x" ? ball.x + step : ball.x;
+    const ny = axis === "y" ? ball.y + step : ball.y;
+
+    if (ballTouchesBlocking(nx, ny, ball.r)) {
+      if (axis === "x") {
+        ball.vx *= -BALL_BOUNCE;
+      } else {
+        if (delta > 0) {
+          // Downward collision: stop vertical speed so gravity drives the next fall naturally.
+          ball.vy = 0;
+        } else {
+          ball.vy *= -BALL_BOUNCE;
+          if (Math.abs(ball.vy) < 0.08) {
+            ball.vy = 0;
+          }
+        }
+      }
+      return;
+    }
+
+    ball.x = nx;
+    ball.y = ny;
+  }
+}
+
+function tryBallSlideDown(ball) {
+  const directions = rand() < 0.5 ? [-1, 1] : [1, -1];
+  const sideSteps = [0.45, 0.8, 1.1];
+
+  for (let d = 0; d < directions.length; d++) {
+    const dir = directions[d];
+    for (let s = 0; s < sideSteps.length; s++) {
+      const nx = ball.x + dir * sideSteps[s];
+      const ny = ball.y + 0.45;
+      if (!ballTouchesBlocking(nx, ny, ball.r)) {
+        ball.x = nx;
+        ball.y = ny;
+        ball.vx = clamp(ball.vx + dir * 0.12, -1.8, 1.8);
+        ball.vy = 0.12;
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function updateBallPhysics() {
+  if (activeBalls.length === 0) {
+    return;
+  }
+
+  for (let i = 0; i < activeBalls.length; i++) {
+    const ball = activeBalls[i];
+
+    ball.vy += BALL_GRAVITY;
+
+    const waterRatio = ballWaterRatio(ball.x, ball.y, ball.r);
+    if (waterRatio > 0) {
+      ball.vy -= 0.3 * waterRatio;
+      ball.vx *= 0.99;
+      ball.vy *= 0.96;
+    }
+
+    ball.vx *= 0.995;
+    ball.vx = clamp(ball.vx, -1.8, 1.8);
+    ball.vy = clamp(ball.vy, -2.6, 2.6);
+
+    const vyBeforeMove = ball.vy;
+    moveBallAxis(ball, "x", ball.vx);
+    moveBallAxis(ball, "y", ball.vy);
+
+    if (vyBeforeMove > 0.05 && ball.vy === 0) {
+      tryBallSlideDown(ball);
+    }
+
+    if (ball.x < ball.r) {
+      ball.x = ball.r;
+      ball.vx = Math.abs(ball.vx) * BALL_BOUNCE;
+    } else if (ball.x > simWidth - 1 - ball.r) {
+      ball.x = simWidth - 1 - ball.r;
+      ball.vx = -Math.abs(ball.vx) * BALL_BOUNCE;
+    }
+
+    if (ball.y < ball.r) {
+      ball.y = ball.r;
+      ball.vy = Math.abs(ball.vy) * BALL_BOUNCE;
+    } else if (ball.y > simHeight - 1 - ball.r) {
+      ball.y = simHeight - 1 - ball.r;
+      ball.vy = -Math.abs(ball.vy) * BALL_BOUNCE;
+    }
+  }
 }
 
 function resize() {
@@ -122,6 +337,8 @@ function resize() {
   const nextCells = new Uint8Array(simWidth * simHeight);
   const nextLife = new Uint8Array(simWidth * simHeight);
   const nextFireState = new Uint8Array(simWidth * simHeight);
+  const nextWaterSideAttempts = new Uint8Array(simWidth * simHeight);
+  const nextWaterSleepVersion = new Uint16Array(simWidth * simHeight);
   updated = new Uint8Array(simWidth * simHeight);
 
   if (oldWidth > 0 && oldHeight > 0) {
@@ -150,6 +367,8 @@ function resize() {
   cells = nextCells;
   life = nextLife;
   fireState = nextFireState;
+  waterSideAttempts = nextWaterSideAttempts;
+  waterSleepVersion = nextWaterSleepVersion;
   frameImage = new ImageData(simWidth, simHeight);
   frameData = frameImage.data;
   renderSurface.width = simWidth;
@@ -328,7 +547,69 @@ function updateSand(x, y, i) {
   updated[i] = 1;
 }
 
+function updateBall(x, y, i) {
+  const belowY = y + 1;
+  if (belowY >= simHeight) {
+    updated[i] = 1;
+    return;
+  }
+
+  const below = idx(x, belowY);
+  const matBelow = cells[below];
+  if (canDisplace(Material.BALL, matBelow) && matBelow !== Material.FIRE) {
+    if (matBelow === Material.EMPTY) {
+      moveCell(i, below);
+    } else {
+      swapCells(i, below);
+    }
+    return;
+  }
+
+  // Balls roll more easily than sand
+  const dir = rand() < 0.5 ? -1 : 1;
+  const lateralSpread = 4; // Can roll further than sand
+  for (let sideTry = 0; sideTry < 2; sideTry++) {
+    const sideDir = sideTry === 0 ? dir : -dir;
+    for (let spread = 1; spread <= lateralSpread; spread++) {
+      const nx = x + sideDir * spread;
+      const ny = y + 1;
+      if (!inBounds(nx, ny)) {
+        continue;
+      }
+      const ni = idx(nx, ny);
+      const target = cells[ni];
+      if (canDisplace(Material.BALL, target) && target !== Material.FIRE) {
+        if (target === Material.EMPTY) {
+          moveCell(i, ni);
+        } else {
+          swapCells(i, ni);
+        }
+        return;
+      }
+      if (target === Material.STONE || target === Material.SAND) {
+        break;
+      }
+    }
+  }
+
+  updated[i] = 1;
+}
+
 function updateWater(x, y, i) {
+  if (performance.now() - lastDrawActivityAt >= WATER_IDLE_FREEZE_MS) {
+    updated[i] = 1;
+    return;
+  }
+
+  if (waterSleepVersion[i] === waterWakeVersion) {
+    updated[i] = 1;
+    return;
+  }
+  if (waterSleepVersion[i] !== 0) {
+    waterSleepVersion[i] = 0;
+    waterSideAttempts[i] = 0;
+  }
+
   const downY = y + 1;
   if (downY < simHeight) {
     const down = idx(x, downY);
@@ -339,6 +620,8 @@ function updateWater(x, y, i) {
       } else {
         swapCells(i, down);
       }
+      waterSideAttempts[down] = 0;
+      waterSleepVersion[down] = 0;
       return;
     }
   }
@@ -375,6 +658,8 @@ function updateWater(x, y, i) {
           } else {
             swapCells(i, ni);
           }
+          waterSideAttempts[ni] = 0;
+          waterSleepVersion[ni] = 0;
           return;
         }
         if (target === Material.STONE || target === Material.SAND) {
@@ -400,6 +685,8 @@ function updateWater(x, y, i) {
       } else {
         swapCells(i, ni);
       }
+      waterSideAttempts[ni] = 0;
+      waterSleepVersion[ni] = 0;
       return;
     }
   }
@@ -423,6 +710,8 @@ function updateWater(x, y, i) {
         } else {
           swapCells(i, ni);
         }
+        waterSideAttempts[ni] = 0;
+        waterSleepVersion[ni] = 0;
         return;
       }
       if (target === Material.STONE || target === Material.SAND) {
@@ -431,6 +720,10 @@ function updateWater(x, y, i) {
     }
   }
 
+  waterSideAttempts[i] = Math.min(255, waterSideAttempts[i] + 1);
+  if (waterSideAttempts[i] >= WATER_MAX_SIDE_ATTEMPTS) {
+    waterSleepVersion[i] = waterWakeVersion;
+  }
   updated[i] = 1;
 }
 
@@ -817,6 +1110,10 @@ function updateLava(x, y, i) {
 
 function updateCell(x, y, i) {
   const mat = cells[i];
+  if (mat !== Material.WATER) {
+    waterSideAttempts[i] = 0;
+    waterSleepVersion[i] = 0;
+  }
   if (mat === Material.EMPTY || updated[i]) {
     return;
   }
@@ -845,6 +1142,9 @@ function updateCell(x, y, i) {
       break;
     case Material.LAVA:
       updateLava(x, y, i);
+      break;
+    case Material.BALL:
+      updateBall(x, y, i);
       break;
     default:
       updated[i] = 1;
@@ -924,6 +1224,8 @@ function drawCircle(cx, cy, radius, material) {
         continue;
       }
       cells[i] = material;
+      waterSideAttempts[i] = 0;
+      waterSleepVersion[i] = 0;
       if (material === Material.FIRE) {
         life[i] = 20 + Math.floor(rand() * 30);
         fireState[i] = previousMaterial === Material.OIL ? 0 : 1;
@@ -954,6 +1256,9 @@ function clearAll() {
   cells.fill(Material.EMPTY);
   life.fill(0);
   fireState.fill(0);
+  waterSideAttempts.fill(0);
+  waterSleepVersion.fill(0);
+  activeBalls = [];
   seedFloor();
 }
 
@@ -1021,6 +1326,21 @@ function render() {
   renderSurfaceCtx.putImageData(frameImage, 0, 0);
   ctx.drawImage(renderSurface, 0, 0, simWidth * scaleX, simHeight * scaleY);
 
+  for (let i = 0; i < activeBalls.length; i++) {
+    const ball = activeBalls[i];
+    const px = ball.x * scaleX;
+    const py = ball.y * scaleY;
+    const pr = ball.r * scaleX;
+    const base = MATERIAL_META[Material.BALL].color;
+    ctx.beginPath();
+    ctx.arc(px, py, pr, 0, Math.PI * 2);
+    ctx.fillStyle = `rgb(${base[0]}, ${base[1]}, ${base[2]})`;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
   if (pointerDown) {
     const brushPx = brushRadius * scaleX;
     ctx.beginPath();
@@ -1035,6 +1355,7 @@ function animationLoop() {
   if (!paused) {
     for (let i = 0; i < speedMultiplier; i++) {
       simulationStep();
+      updateBallPhysics();
     }
   }
   render();
@@ -1051,6 +1372,20 @@ function updatePointerFromEvent(event) {
 
 function paintFromPointer() {
   const targetMaterial = eraseMode ? Material.EMPTY : activeMaterial;
+
+  signalWaterWake();
+
+  if (!eraseMode && targetMaterial === Material.BALL) {
+    if (prevPaintX == null || prevPaintY == null) {
+      if (spawnSingleBall(pointerSimX, pointerSimY)) {
+        playBrushAudio(targetMaterial);
+      }
+    }
+    prevPaintX = pointerSimX;
+    prevPaintY = pointerSimY;
+    return;
+  }
+
   if (prevPaintX == null || prevPaintY == null) {
     drawCircle(pointerSimX, pointerSimY, brushRadius, targetMaterial);
   } else {
@@ -1072,6 +1407,9 @@ function makeMaterialButton(mat) {
     speakMaterialName(MATERIAL_META[mat].name);
   });
   btn.addEventListener("mouseenter", () => {
+    if (isMuted) {
+      return;
+    }
     speakMaterialName(MATERIAL_META[mat].name);
   });
   return btn;
@@ -1293,6 +1631,12 @@ function playStonePlaceSound() {
   playNoiseLayer("lowpass", 300, 1.4, 0.018, 0.010, 0.13);
 }
 
+function playBallBounceSound() {
+  // Bouncy rubber ball
+  playNoiseLayer("bandpass", 950, 1.2, 0.025, 0.004, 0.08);
+  playNoiseLayer("highpass", 1600, 0.9, 0.014, 0.003, 0.06);
+}
+
 function playBrushAudio(material) {
   if (!audioCtx || audioCtx.state !== "running") return;
 
@@ -1305,11 +1649,16 @@ function playBrushAudio(material) {
     case Material.SMOKE:  playSmokePlaceSound(); break;
     case Material.SAND:   playSandPlaceSound();  break;
     case Material.STONE:  playStonePlaceSound(); break;
+    case Material.BALL:   playBallBounceSound(); break;
     default: break;
   }
 }
 
 function speakMaterialName(name) {
+  if (isMuted) {
+    return;
+  }
+
   if (!("speechSynthesis" in window)) {
     return;
   }
