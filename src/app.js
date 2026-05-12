@@ -52,6 +52,9 @@ const brushSizeInput = document.getElementById("brushSize");
 const brushSizeValue = document.getElementById("brushSizeValue");
 const simSpeedInput = document.getElementById("simSpeed");
 const simSpeedValue = document.getElementById("simSpeedValue");
+const fontSizeSmallBtn = document.getElementById("fontSizeSmall");
+const fontSizeMediumBtn = document.getElementById("fontSizeMedium");
+const fontSizeLargeBtn = document.getElementById("fontSizeLarge");
 const clearBtn = document.getElementById("clearBtn");
 const muteBtn = document.getElementById("muteBtn");
 
@@ -1097,19 +1100,48 @@ simSpeedInput.addEventListener("input", () => {
   simSpeedValue.textContent = String(speedMultiplier);
 });
 
+function setFontSize(scale) {
+  document.documentElement.style.fontSize = (16 * scale) + "px";
+  
+  // Adjust HUD width based on font size
+  let hudWidth = "360px";
+  if (scale === 1.25) {
+    hudWidth = "400px";
+  } else if (scale === 1.5) {
+    hudWidth = "440px";
+  }
+  document.documentElement.style.setProperty("--hud-width", hudWidth);
+  
+  fontSizeSmallBtn.classList.toggle("active", scale === 1);
+  fontSizeMediumBtn.classList.toggle("active", scale === 1.25);
+  fontSizeLargeBtn.classList.toggle("active", scale === 1.5);
+}
+
+fontSizeSmallBtn.addEventListener("click", () => setFontSize(1));
+fontSizeMediumBtn.addEventListener("click", () => setFontSize(1.25));
+fontSizeLargeBtn.addEventListener("click", () => setFontSize(1.5));
+
 clearBtn.addEventListener("click", () => {
   clearAll();
 });
 
 muteBtn.addEventListener("click", () => {
   isMuted = !isMuted;
-  muteBtn.textContent = isMuted ? "🔇 Sound is Off" : "🔊 Sound is On";
+  muteBtn.textContent = isMuted ? "🔇 Sound is Off (s)" : "🔊 Sound is On (s)";
 });
 
 window.addEventListener("keydown", (event) => {
   if (event.code === "Space") {
     event.preventDefault();
     paused = !paused;
+    return;
+  }
+
+  // Toggle mute on 's' or 'S'
+  if (event.key === "s" || event.key === "S") {
+    event.preventDefault();
+    isMuted = !isMuted;
+    muteBtn.textContent = isMuted ? "🔇 Sound is Off (s)" : "🔊 Sound is On (s)";
     return;
   }
 

@@ -41,7 +41,8 @@ body {
   position: fixed;
   top: 14px;
   left: 14px;
-  width: min(360px, calc(100vw - 28px));
+  width: min(var(--hud-width, 360px), calc(100vw - 28px));
+  max-height: calc(100vh - 28px);
   padding: 14px;
   border-radius: 14px;
   background: linear-gradient(170deg, rgba(12, 20, 24, 0.82), var(--panel));
@@ -49,6 +50,8 @@ body {
   backdrop-filter: blur(8px);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
   z-index: 5;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .brand {
@@ -108,6 +111,39 @@ button.ghost {
   width: 100%;
 }
 
+.font-size-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.font-btn {
+  border: 1px solid rgba(178, 230, 206, 0.35);
+  background: rgba(18, 30, 35, 0.84);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 90ms ease;
+}
+
+.font-btn:hover {
+  border-color: rgba(178, 230, 206, 0.6);
+  background: rgba(26, 44, 49, 0.92);
+}
+
+.font-btn:active {
+  transform: translateY(1px);
+}
+
+.font-btn.active {
+  background: linear-gradient(160deg, rgba(82, 141, 119, 0.65), rgba(44, 92, 81, 0.88));
+  border-color: rgba(178, 230, 206, 0.82);
+}
+
 .slider-row {
   display: grid;
   grid-template-columns: 70px 1fr 34px;
@@ -121,6 +157,23 @@ button.ghost {
 .slider-row input[type="range"] {
   width: 100%;
   accent-color: var(--accent);
+}
+
+.hud::-webkit-scrollbar {
+  width: 8px;
+}
+
+.hud::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hud::-webkit-scrollbar-thumb {
+  background: rgba(137, 216, 190, 0.4);
+  border-radius: 4px;
+}
+
+.hud::-webkit-scrollbar-thumb:hover {
+  background: rgba(137, 216, 190, 0.6);
 }
 
 .hint {
