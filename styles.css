@@ -17,12 +17,25 @@
 html,
 body {
   width: 100%;
+.auth-status {
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: rgba(17, 28, 33, 0.7);
+  border: 1px solid rgba(178, 230, 206, 0.25);
+  border-radius: 8px;
+  padding: 7px 10px;
+  margin-bottom: 10px;
+}
   height: 100%;
   margin: 0;
   overflow: hidden;
   background: radial-gradient(130% 110% at 10% 8%, #384f4b 0%, var(--bg-mid) 45%, var(--bg-top) 100%);
   color: var(--text);
   font-family: "IBM Plex Sans", "Segoe UI", Tahoma, sans-serif;
+.auth-row {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
 }
 
 body {
@@ -97,6 +110,10 @@ button.active {
 button.ghost {
   margin-top: 10px;
   width: 100%;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .button-row {

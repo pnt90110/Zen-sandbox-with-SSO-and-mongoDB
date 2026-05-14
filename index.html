@@ -9,6 +9,11 @@
   <body>
     <div class="hud">
       <div class="brand">The Zen Sandbox</div>
+      <div class="auth-status" id="authStatus">Checking sign-in…</div>
+      <div class="button-row auth-row">
+        <button id="loginBtn" class="ghost">Sign In</button>
+        <button id="logoutBtn" class="ghost">Sign Out</button>
+      </div>
       <div class="controls" id="materialControls"></div>
       <label class="slider-row">
         <span>Brush</span>
@@ -28,6 +33,10 @@
       <div class="button-row">
         <button id="clearBtn" class="ghost">Clear</button>
         <button id="muteBtn" class="ghost">🔊 Sound is On (s)</button>
+      </div>
+      <div class="button-row">
+        <button id="saveStateBtn" class="ghost">Save to Cloud</button>
+        <button id="loadStateBtn" class="ghost">Load from Cloud</button>
       </div>
     </div>
 

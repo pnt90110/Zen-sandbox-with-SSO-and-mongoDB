@@ -6,11 +6,59 @@ A minimalist, desktop-first cellular automata toy focused on calm interaction an
 ## Run
 
 1. Open this folder in VS Code.
-2. Start a local static server in this folder (for best browser compatibility):
-   - `python -m http.server 5500`
-3. Open `http://localhost:5500`.
+2. Install dependencies:
+   - `npm install`
+3. Copy `.env.example` to `.env` and fill the values.
+4. Start the app server:
+   - `npm run dev`
+5. Open `http://localhost:8000`.
 
-You can also open `index.html` directly, but some browsers restrict audio in `file://` pages.
+This app now runs through `server.js` so it can use SSO and MongoDB APIs.
+
+## SSO + MongoDB Setup
+
+The server uses OpenID Connect (OIDC) for SSO and stores each user's sandbox state in MongoDB.
+
+### 1) Create an OIDC app in your IdP
+
+You can use Auth0, Okta, Azure Entra ID, Keycloak, etc.
+
+- Callback URL: `http://localhost:8000/callback`
+- Logout URL / post-logout redirect: `http://localhost:8000`
+- Response type: Authorization Code
+- Scopes: `openid profile email` by default, or `openid` if your IdP only allows that
+- Optional redirect override: set `OIDC_REDIRECT_URI` in `.env` when your IdP expects a URI that differs from `BASE_URL/callback`
+
+### 2) Create MongoDB Atlas database
+
+- Create a cluster and database user.
+- Allow your local IP or use a secure network path.
+- Copy the connection string.
+
+### 3) Fill `.env`
+
+Required values:
+
+- `SESSION_SECRET`
+- `OIDC_ISSUER_BASE_URL`
+- `OIDC_CLIENT_ID`
+- `OIDC_CLIENT_SECRET`
+- `MONGODB_URI`
+
+Optional values:
+
+- `OIDC_SCOPE` (default `openid profile email`)
+- `OIDC_REDIRECT_URI` (default `BASE_URL/callback`)
+- `OIDC_AUDIENCE`
+- `MONGODB_DB` (default `zen_sandbox`)
+- `MONGODB_COLLECTION` (default `sandbox_states`)
+
+### 4) Use it in the UI
+
+- Click **Sign In**.
+- Paint normally.
+- Click **Save to Cloud** to store your state in MongoDB.
+- Click **Load from Cloud** to restore your latest saved state.
 
 ## Current Materials
 

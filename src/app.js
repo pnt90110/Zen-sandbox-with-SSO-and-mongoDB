@@ -61,6 +61,11 @@ const fontSizeMediumBtn = document.getElementById("fontSizeMedium");
 const fontSizeLargeBtn = document.getElementById("fontSizeLarge");
 const clearBtn = document.getElementById("clearBtn");
 const muteBtn = document.getElementById("muteBtn");
+const authStatusEl = document.getElementById("authStatus");
+const loginBtn = document.getElementById("loginBtn");
+const logoutBtn = document.getElementById("logoutBtn");
+const saveStateBtn = document.getElementById("saveStateBtn");
+const loadStateBtn = document.getElementById("loadStateBtn");
 
 let simScale = 2;
 let simWidth = 0;
@@ -90,6 +95,7 @@ let frameParity = 0;
 let lastSpokenMaterial = "";
 let lastSpokenAt = 0;
 let activeBalls = [];
+let authUser = null;
 
 const BALL_RADIUS = 4;
 const BALL_GRAVITY = 0.16;
@@ -134,7 +140,7 @@ function sampleCellAt(x, y) {
 }
 
 function isBallBlockingMaterial(mat) {
-  return mat === Material.SAND || mat === Material.STONE || mat === Material.LAVA;
+  return mat === Material.SAND || mat === Material.STONE || mat === Material.LAVA || mat === Material.ICE;
 }
 
 function ballTouchesBlocking(x, y, radius) {
@@ -939,12 +945,15 @@ function updateFire(x, y, i) {
 function updateIce(x, y, i) {
   // Melt when adjacent to fire or lava
   const neighbors4 = [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y]];
+  let adjacentIceCount = 0;
+  let adjacentWaterCount = 0;
   for (let n = 0; n < neighbors4.length; n++) {
     const [nx, ny] = neighbors4[n];
     if (!inBounds(nx, ny)) continue;
     const ni = idx(nx, ny);
     const mat = cells[ni];
-    if ((mat === Material.FIRE || mat === Material.LAVA) && rand() < 0.05) {
+    const meltChance = mat === Material.LAVA ? 0.18 : mat === Material.FIRE ? 0.05 : 0;
+    if (meltChance > 0 && rand() < meltChance) {
       cells[i] = Material.WATER;
       life[i] = 0;
       fireState[i] = 0;
@@ -958,14 +967,23 @@ function updateIce(x, y, i) {
       fireState[ni] = 0;
       updated[ni] = 1;
     }
+    if (mat === Material.ICE) {
+      adjacentIceCount += 1;
+    } else if (mat === Material.WATER) {
+      adjacentWaterCount += 1;
+    }
   }
 
   // Buoyancy: if submerged, ice rises through water.
   if (y > 0) {
     const up = idx(x, y - 1);
     if (cells[up] === Material.WATER) {
-      swapCells(i, up);
-      return;
+      const denseIcePack = adjacentIceCount >= 2 && adjacentWaterCount <= 1;
+      const riseChance = denseIcePack ? 0.18 : 0.72;
+      if (rand() < riseChance) {
+        swapCells(i, up);
+        return;
+      }
     }
   }
 
@@ -1050,7 +1068,7 @@ function updateLava(x, y, i) {
       updated[ni] = 1;
       return;
     }
-    if (mat === Material.ICE && rand() < 0.2) {
+    if (mat === Material.ICE && rand() < 0.45) {
       // Ice melts to water, lava cools to stone
       cells[i] = Material.STONE;
       life[i] = 0;
@@ -1087,7 +1105,7 @@ function updateLava(x, y, i) {
       moveCell(i, below);
       return;
     }
-    if (matBelow === Material.WATER || matBelow === Material.OIL || matBelow === Material.SAND) {
+    if (matBelow === Material.WATER || matBelow === Material.OIL) {
       swapCells(i, below);
       return;
     }
@@ -1107,7 +1125,7 @@ function updateLava(x, y, i) {
     if (!inBounds(nx, ny)) continue;
     const ni = idx(nx, ny);
     const target = cells[ni];
-    if (target === Material.EMPTY || target === Material.SMOKE || target === Material.WATER || target === Material.OIL || target === Material.SAND) {
+    if (target === Material.EMPTY || target === Material.SMOKE || target === Material.WATER || target === Material.OIL) {
       if (target === Material.EMPTY) {
         moveCell(i, ni);
       } else {
@@ -1124,7 +1142,7 @@ function updateLava(x, y, i) {
     if (!inBounds(nx, y)) continue;
     const ni = idx(nx, y);
     const target = cells[ni];
-    if (target === Material.EMPTY || target === Material.WATER || target === Material.OIL || target === Material.SAND) {
+    if (target === Material.EMPTY || target === Material.WATER || target === Material.OIL) {
       if (target === Material.EMPTY) {
         moveCell(i, ni);
       } else {
@@ -1292,6 +1310,229 @@ function clearAll() {
   waterSleepVersion.fill(0);
   activeBalls = [];
   seedFloor();
+}
+
+function setStatus(text, isError = false) {
+  if (!authStatusEl) {
+    return;
+  }
+  authStatusEl.textContent = text;
+  authStatusEl.style.color = isError ? "#ffb7a1" : "";
+}
+
+function updateAuthButtons() {
+  const authenticated = Boolean(authUser);
+  if (loginBtn) {
+    loginBtn.disabled = authenticated;
+  }
+  if (logoutBtn) {
+    logoutBtn.disabled = !authenticated;
+  }
+  if (saveStateBtn) {
+    saveStateBtn.disabled = !authenticated;
+  }
+  if (loadStateBtn) {
+    loadStateBtn.disabled = !authenticated;
+  }
+}
+
+async function apiFetch(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const message = payload && payload.message ? payload.message : `Request failed (${response.status})`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+
+  return payload;
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(base64) {
+  const binary = atob(base64);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+}
+
+function uint16ToBase64(values) {
+  const bytes = new Uint8Array(values.length * 2);
+  for (let i = 0; i < values.length; i++) {
+    const value = values[i];
+    const offset = i * 2;
+    bytes[offset] = value & 0xff;
+    bytes[offset + 1] = (value >> 8) & 0xff;
+  }
+  return bytesToBase64(bytes);
+}
+
+function base64ToUint16(base64) {
+  const bytes = base64ToBytes(base64);
+  if (bytes.length % 2 !== 0) {
+    throw new Error("Invalid waterSleepVersion payload.");
+  }
+  const values = new Uint16Array(bytes.length / 2);
+  for (let i = 0; i < values.length; i++) {
+    const offset = i * 2;
+    values[i] = bytes[offset] | (bytes[offset + 1] << 8);
+  }
+  return values;
+}
+
+function buildCloudStatePayload() {
+  return {
+    version: 1,
+    simWidth,
+    simHeight,
+    cells: bytesToBase64(cells),
+    life: bytesToBase64(life),
+    fireState: bytesToBase64(fireState),
+    waterSideAttempts: bytesToBase64(waterSideAttempts),
+    waterSleepVersion: uint16ToBase64(waterSleepVersion),
+    activeBalls: activeBalls.map((ball) => ({
+      x: ball.x,
+      y: ball.y,
+      vx: ball.vx,
+      vy: ball.vy,
+      r: ball.r,
+    })),
+  };
+}
+
+function applyCloudStatePayload(payload) {
+  const width = Number(payload.simWidth);
+  const height = Number(payload.simHeight);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error("Saved state has invalid dimensions.");
+  }
+
+  const nextCells = base64ToBytes(payload.cells);
+  const nextLife = base64ToBytes(payload.life);
+  const nextFireState = base64ToBytes(payload.fireState);
+  const nextWaterSideAttempts = base64ToBytes(payload.waterSideAttempts);
+  const nextWaterSleepVersion = base64ToUint16(payload.waterSleepVersion);
+  const size = width * height;
+
+  if (
+    nextCells.length !== size ||
+    nextLife.length !== size ||
+    nextFireState.length !== size ||
+    nextWaterSideAttempts.length !== size ||
+    nextWaterSleepVersion.length !== size
+  ) {
+    throw new Error("Saved state shape does not match its dimensions.");
+  }
+
+  simWidth = width;
+  simHeight = height;
+  cells = nextCells;
+  life = nextLife;
+  fireState = nextFireState;
+  waterSideAttempts = nextWaterSideAttempts;
+  waterSleepVersion = nextWaterSleepVersion;
+  updated = new Uint8Array(size);
+  frameImage = new ImageData(simWidth, simHeight);
+  frameData = frameImage.data;
+  renderSurface.width = simWidth;
+  renderSurface.height = simHeight;
+  activeBalls = Array.isArray(payload.activeBalls)
+    ? payload.activeBalls
+        .map((ball) => ({
+          x: Number(ball.x),
+          y: Number(ball.y),
+          vx: Number(ball.vx),
+          vy: Number(ball.vy),
+          r: Number(ball.r) || BALL_RADIUS,
+        }))
+        .filter((ball) => Number.isFinite(ball.x) && Number.isFinite(ball.y) && Number.isFinite(ball.vx) && Number.isFinite(ball.vy))
+    : [];
+
+  signalWaterWake();
+}
+
+async function refreshAuthState() {
+  try {
+    const data = await apiFetch("/api/me", { method: "GET" });
+    authUser = data && data.authenticated ? data.user : null;
+    if (authUser) {
+      const label = authUser.email || authUser.name || authUser.sub;
+      setStatus(`Signed in as ${label}`);
+    } else {
+      setStatus("Not signed in");
+    }
+  } catch {
+    authUser = null;
+    setStatus("Not signed in");
+  }
+
+  updateAuthButtons();
+}
+
+async function saveStateToCloud() {
+  if (!authUser) {
+    setStatus("Sign in first to save state.", true);
+    return;
+  }
+
+  saveStateBtn.disabled = true;
+  setStatus("Saving state...");
+  try {
+    const payload = buildCloudStatePayload();
+    const result = await apiFetch("/api/state", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+    setStatus(`Saved to MongoDB at ${new Date(result.savedAt).toLocaleTimeString()}`);
+  } catch (error) {
+    setStatus(`Save failed: ${error.message}`, true);
+  } finally {
+    updateAuthButtons();
+  }
+}
+
+async function loadStateFromCloud() {
+  if (!authUser) {
+    setStatus("Sign in first to load state.", true);
+    return;
+  }
+
+  loadStateBtn.disabled = true;
+  setStatus("Loading state...");
+  try {
+    const payload = await apiFetch("/api/state", { method: "GET" });
+    applyCloudStatePayload(payload);
+    setStatus("Loaded state from MongoDB");
+  } catch (error) {
+    setStatus(`Load failed: ${error.message}`, true);
+  } finally {
+    updateAuthButtons();
+  }
 }
 
 function render() {
@@ -1498,6 +1739,22 @@ clearBtn.addEventListener("click", () => {
 muteBtn.addEventListener("click", () => {
   isMuted = !isMuted;
   muteBtn.textContent = isMuted ? "🔇 Sound is Off (s)" : "🔊 Sound is On (s)";
+});
+
+loginBtn.addEventListener("click", () => {
+  window.location.href = "/login";
+});
+
+logoutBtn.addEventListener("click", () => {
+  window.location.href = "/logout";
+});
+
+saveStateBtn.addEventListener("click", () => {
+  saveStateToCloud();
+});
+
+loadStateBtn.addEventListener("click", () => {
+  loadStateFromCloud();
 });
 
 window.addEventListener("keydown", (event) => {
@@ -1713,3 +1970,5 @@ function speakMaterialName(name) {
 resize();
 window.addEventListener("resize", resize);
 animationLoop();
+updateAuthButtons();
+refreshAuthState();
