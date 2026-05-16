@@ -9,6 +9,7 @@ const Material = {
   ICE: 7,
   LAVA: 8,
   BALL: 9,
+  PLANT: 10,
 };
 
 const MATERIAL_ORDER = [
@@ -21,6 +22,7 @@ const MATERIAL_ORDER = [
   Material.ICE,
   Material.LAVA,
   Material.BALL,
+  Material.PLANT,
 ];
 
 const KEY_TO_MATERIAL = {
@@ -33,6 +35,7 @@ const KEY_TO_MATERIAL = {
   7: Material.ICE,
   8: Material.LAVA,
   9: Material.BALL,
+  0: Material.PLANT,
 };
 
 const MATERIAL_META = {
@@ -42,9 +45,10 @@ const MATERIAL_META = {
   [Material.STONE]: { name: "Stone (4)", color: [119, 123, 129], density: 9.0 },
   [Material.FIRE]: { name: "Fire (5)", color: [239, 130, 70], density: 0.6 },
   [Material.OIL]: { name: "Oil (6)", color: [134, 106, 71], density: 2.2 },
-  [Material.ICE]: { name: "Ice (7)", color: [190, 230, 255], density: 9.0 },
+  [Material.ICE]: { name: "Ice (7)", color: [190, 230, 255], density: 1.7 },
   [Material.LAVA]: { name: "Lava (8)", color: [220, 70, 15], density: 6.0 },
   [Material.BALL]: { name: "Ball (9)", color: [255, 80, 100], density: 5.5 },
+  [Material.PLANT]: { name: "Plant (0)", color: [74, 170, 98], density: 3.2 },
 };
 
 const FLOOR_ROWS = 2;
@@ -102,7 +106,7 @@ const BALL_GRAVITY = 0.16;
 const BALL_BOUNCE = 0.55;
 const MAX_BALLS = 7;
 const WATER_MAX_SIDE_ATTEMPTS = 7;
-const WATER_IDLE_FREEZE_MS = 8000;
+const WATER_IDLE_FREEZE_MS = 10000;
 let waterWakeVersion = 1;
 let lastDrawActivityAt = performance.now();
 
@@ -140,7 +144,7 @@ function sampleCellAt(x, y) {
 }
 
 function isBallBlockingMaterial(mat) {
-  return mat === Material.SAND || mat === Material.STONE || mat === Material.LAVA || mat === Material.ICE;
+  return mat === Material.SAND || mat === Material.STONE || mat === Material.LAVA || mat === Material.ICE || mat === Material.PLANT;
 }
 
 function ballTouchesBlocking(x, y, radius) {
@@ -661,6 +665,46 @@ function updateWater(x, y, i) {
     }
   }
 
+  // Under-oil drift: water can spread sideways when capped by oil directly above.
+  const directlyUnderOil = y > 0 && cells[idx(x, y - 1)] === Material.OIL;
+  if (directlyUnderOil && rand() < 0.42) {
+    const dir = rand() < 0.5 ? -1 : 1;
+    for (let step = 0; step < 2; step++) {
+      const dx = step === 0 ? dir : -dir;
+      const nx = x + dx;
+      if (!inBounds(nx, y)) {
+        continue;
+      }
+
+      const ni = idx(nx, y);
+      const target = cells[ni];
+      const stillUnderOil = y > 0 && cells[idx(nx, y - 1)] === Material.OIL;
+      if (!stillUnderOil) {
+        continue;
+      }
+
+      if (target === Material.EMPTY || target === Material.SMOKE || target === Material.FIRE) {
+        if (target === Material.EMPTY) {
+          moveCell(i, ni);
+        } else {
+          swapCells(i, ni);
+        }
+        waterSideAttempts[ni] = 0;
+        waterSleepVersion[ni] = 0;
+        return;
+      }
+
+      if (target === Material.OIL) {
+        if (!tryWaterPushOilUp(i, ni, nx, y)) {
+          swapCells(i, ni);
+        }
+        waterSideAttempts[ni] = 0;
+        waterSleepVersion[ni] = 0;
+        return;
+      }
+    }
+  }
+
   const hasOilAbove =
     y > 0 &&
     (cells[idx(x, y - 1)] === Material.OIL ||
@@ -763,6 +807,15 @@ function updateWater(x, y, i) {
 }
 
 function updateOil(x, y, i) {
+  // Re-stratify after disturbances: oil should rise through water.
+  if (y > 0) {
+    const up = idx(x, y - 1);
+    if (cells[up] === Material.WATER) {
+      swapCells(i, up);
+      return;
+    }
+  }
+
   const downY = y + 1;
   let floatingOnWater = false;
   if (downY < simHeight) {
@@ -974,10 +1027,11 @@ function updateIce(x, y, i) {
     }
   }
 
-  // Buoyancy: if submerged, ice rises through water.
+  // Buoyancy: if submerged, ice rises through water or oil.
   if (y > 0) {
     const up = idx(x, y - 1);
-    if (cells[up] === Material.WATER) {
+    const upMat = cells[up];
+    if (upMat === Material.WATER || upMat === Material.OIL) {
       const denseIcePack = adjacentIceCount >= 2 && adjacentWaterCount <= 1;
       const riseChance = denseIcePack ? 0.18 : 0.72;
       if (rand() < riseChance) {
@@ -987,8 +1041,34 @@ function updateIce(x, y, i) {
     }
   }
 
-  // Fall straight down
+  // Surface drift: ice can spread sideways when resting on top of oil.
   const belowY = y + 1;
+  const restingOnOil = belowY < simHeight && cells[idx(x, belowY)] === Material.OIL;
+  if (restingOnOil && rand() < 0.45) {
+    const dir = rand() < 0.5 ? -1 : 1;
+    for (let step = 0; step < 2; step++) {
+      const dx = step === 0 ? dir : -dir;
+      const nx = x + dx;
+      if (!inBounds(nx, y)) {
+        continue;
+      }
+
+      const ni = idx(nx, y);
+      const sideMat = cells[ni];
+      const hasOilSupport = y + 1 < simHeight && cells[idx(nx, y + 1)] === Material.OIL;
+
+      if ((sideMat === Material.EMPTY || sideMat === Material.WATER || sideMat === Material.OIL) && hasOilSupport) {
+        if (sideMat === Material.EMPTY) {
+          moveCell(i, ni);
+        } else {
+          swapCells(i, ni);
+        }
+        return;
+      }
+    }
+  }
+
+  // Fall straight down
   if (belowY < simHeight) {
     const below = idx(x, belowY);
     const matBelow = cells[below];
@@ -1155,6 +1235,113 @@ function updateLava(x, y, i) {
   updated[i] = 1;
 }
 
+function updatePlant(x, y, i) {
+  const neighbors4 = [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y]];
+  let touchesWater = false;
+
+  for (let n = 0; n < neighbors4.length; n++) {
+    const [nx, ny] = neighbors4[n];
+    if (!inBounds(nx, ny)) {
+      continue;
+    }
+
+    const ni = idx(nx, ny);
+    const mat = cells[ni];
+
+    if (mat === Material.WATER) {
+      touchesWater = true;
+      continue;
+    }
+
+    if (mat === Material.FIRE || mat === Material.LAVA) {
+      const burnChance = mat === Material.LAVA ? 0.24 : 0.08;
+      if (rand() < burnChance) {
+        cells[i] = Material.FIRE;
+        life[i] = 18 + Math.floor(rand() * 22);
+        fireState[i] = 0;
+        updated[i] = 1;
+        return;
+      }
+    }
+  }
+
+  // Gravity: plants fall and can slide diagonally like loose sprouts/seeds.
+  const belowY = y + 1;
+  if (belowY < simHeight) {
+    const below = idx(x, belowY);
+    const matBelow = cells[below];
+    if (canDisplace(Material.PLANT, matBelow) && matBelow !== Material.FIRE && matBelow !== Material.LAVA && matBelow !== Material.PLANT) {
+      if (matBelow === Material.EMPTY) {
+        moveCell(i, below);
+      } else {
+        swapCells(i, below);
+      }
+      return;
+    }
+  }
+
+  const dir = rand() < 0.5 ? -1 : 1;
+  for (let step = 0; step < 2; step++) {
+    const dx = step === 0 ? dir : -dir;
+    const nx = x + dx;
+    const ny = y + 1;
+    if (!inBounds(nx, ny)) {
+      continue;
+    }
+
+    const ni = idx(nx, ny);
+    const target = cells[ni];
+    if (canDisplace(Material.PLANT, target) && target !== Material.FIRE && target !== Material.LAVA && target !== Material.PLANT) {
+      if (target === Material.EMPTY) {
+        moveCell(i, ni);
+      } else {
+        swapCells(i, ni);
+      }
+      return;
+    }
+  }
+
+  if (touchesWater && rand() < 0.07) {
+    const growthTargets = [
+      [x, y - 1],
+      [x - 1, y],
+      [x + 1, y],
+    ];
+    const start = Math.floor(rand() * growthTargets.length);
+
+    for (let step = 0; step < growthTargets.length; step++) {
+      const [gx, gy] = growthTargets[(start + step) % growthTargets.length];
+      if (!inBounds(gx, gy)) {
+        continue;
+      }
+
+      const gi = idx(gx, gy);
+      if (cells[gi] !== Material.EMPTY && cells[gi] !== Material.WATER) {
+        continue;
+      }
+
+      const supportBelow = gy + 1 < simHeight ? cells[idx(gx, gy + 1)] : Material.STONE;
+      const supported =
+        supportBelow === Material.PLANT ||
+        supportBelow === Material.SAND ||
+        supportBelow === Material.STONE ||
+        supportBelow === Material.ICE;
+
+      if (!supported) {
+        continue;
+      }
+
+      cells[gi] = Material.PLANT;
+      life[gi] = 0;
+      fireState[gi] = 0;
+      updated[gi] = 1;
+      break;
+    }
+  }
+
+  updated[i] = 1;
+}
+
 function updateCell(x, y, i) {
   const mat = cells[i];
   if (mat !== Material.WATER) {
@@ -1192,6 +1379,9 @@ function updateCell(x, y, i) {
       break;
     case Material.BALL:
       updateBall(x, y, i);
+      break;
+    case Material.PLANT:
+      updatePlant(x, y, i);
       break;
     default:
       updated[i] = 1;
@@ -1240,13 +1430,13 @@ function drawCircle(cx, cy, radius, material) {
       }
       const i = idx(x, y);
       const previousMaterial = cells[i];
-      if ((material === Material.OIL || material === Material.SAND || material === Material.ICE) && (cells[i] === Material.STONE || cells[i] === Material.ICE || cells[i] === Material.LAVA)) {
+      if ((material === Material.OIL || material === Material.SAND || material === Material.ICE || material === Material.PLANT) && (cells[i] === Material.STONE || cells[i] === Material.ICE || cells[i] === Material.LAVA || cells[i] === Material.PLANT)) {
         continue;
       }
       if (material === Material.WATER && (cells[i] === Material.STONE || cells[i] === Material.LAVA)) {
         continue;
       }
-      if (material === Material.SMOKE && (cells[i] === Material.STONE || cells[i] === Material.WATER || cells[i] === Material.OIL || cells[i] === Material.SAND || cells[i] === Material.ICE || cells[i] === Material.LAVA)) {
+      if (material === Material.SMOKE && (cells[i] === Material.STONE || cells[i] === Material.WATER || cells[i] === Material.OIL || cells[i] === Material.SAND || cells[i] === Material.ICE || cells[i] === Material.LAVA || cells[i] === Material.PLANT)) {
         continue;
       }
       if (material === Material.SAND && (cells[i] === Material.WATER || cells[i] === Material.OIL)) {
@@ -1577,6 +1767,33 @@ function render() {
       r += glint * 0.4;
       g += glint * 0.6;
       b += glint;
+    } else if (mat === Material.PLANT) {
+      const x = i % simWidth;
+      const y = Math.floor(i / simWidth);
+      const upPlant = y > 0 && cells[idx(x, y - 1)] === Material.PLANT;
+      const downPlant = y + 1 < simHeight && cells[idx(x, y + 1)] === Material.PLANT;
+      const leftPlant = x > 0 && cells[idx(x - 1, y)] === Material.PLANT;
+      const rightPlant = x + 1 < simWidth && cells[idx(x + 1, y)] === Material.PLANT;
+
+      // Deterministic micro-variation keeps plants textured without frame flicker.
+      const grain = (((x * 37 + y * 71) ^ (x * 11)) & 7) - 3;
+
+      if (!upPlant && (leftPlant || rightPlant || !downPlant)) {
+        // Leafy tip
+        r = 98 + grain;
+        g = 188 + grain * 2;
+        b = 108 + grain;
+      } else if (!downPlant) {
+        // Root/base near ground
+        r = 88 + grain;
+        g = 120 + grain;
+        b = 70 + grain;
+      } else {
+        // Stem section
+        r = 66 + grain;
+        g = 154 + grain * 2;
+        b = 84 + grain;
+      }
     } else if (mat === Material.LAVA) {
       const flicker = 0.8 + rand() * 0.4;
       r = clamp((r * 1.1 * flicker) | 0, 0, 255);
@@ -1926,6 +2143,12 @@ function playBallBounceSound() {
   playNoiseLayer("highpass", 1600, 0.9, 0.014, 0.003, 0.06);
 }
 
+function playPlantPlaceSound() {
+  // Soft leafy brush
+  playNoiseLayer("bandpass", 780, 0.9, 0.017, 0.007, 0.11);
+  playNoiseLayer("highpass", 1450, 0.6, 0.008, 0.006, 0.09);
+}
+
 function playBrushAudio(material) {
   if (!audioCtx || audioCtx.state !== "running") return;
 
@@ -1939,6 +2162,7 @@ function playBrushAudio(material) {
     case Material.SAND:   playSandPlaceSound();  break;
     case Material.STONE:  playStonePlaceSound(); break;
     case Material.BALL:   playBallBounceSound(); break;
+    case Material.PLANT:  playPlantPlaceSound(); break;
     default: break;
   }
 }
