@@ -1430,13 +1430,13 @@ function drawCircle(cx, cy, radius, material) {
       }
       const i = idx(x, y);
       const previousMaterial = cells[i];
-      if ((material === Material.OIL || material === Material.SAND || material === Material.ICE || material === Material.PLANT) && (cells[i] === Material.STONE || cells[i] === Material.ICE || cells[i] === Material.LAVA || cells[i] === Material.PLANT)) {
+      if ((material === Material.OIL || material === Material.SAND || material === Material.ICE || material === Material.PLANT) && (cells[i] === Material.STONE || cells[i] === Material.ICE || cells[i] === Material.PLANT)) {
         continue;
       }
-      if (material === Material.WATER && (cells[i] === Material.STONE || cells[i] === Material.LAVA)) {
+      if (material === Material.WATER && cells[i] === Material.STONE) {
         continue;
       }
-      if (material === Material.SMOKE && (cells[i] === Material.STONE || cells[i] === Material.WATER || cells[i] === Material.OIL || cells[i] === Material.SAND || cells[i] === Material.ICE || cells[i] === Material.LAVA || cells[i] === Material.PLANT)) {
+      if (material === Material.SMOKE && (cells[i] === Material.STONE || cells[i] === Material.WATER || cells[i] === Material.OIL || cells[i] === Material.SAND || cells[i] === Material.ICE || cells[i] === Material.PLANT)) {
         continue;
       }
       if (material === Material.SAND && (cells[i] === Material.WATER || cells[i] === Material.OIL)) {
