@@ -7,12 +7,6 @@
     }
   },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/index.js" },
-    { "source": "/login", "destination": "/api/index.js" },
-    { "source": "/logout", "destination": "/api/index.js" },
-    { "source": "/callback", "destination": "/api/index.js" },
-    { "source": "/styles.css", "destination": "/frontend/styles.css" },
-    { "source": "/src/:path*", "destination": "/frontend/src/:path*" },
-    { "source": "/", "destination": "/frontend/index.html" }
+    { "source": "/(.*)", "destination": "/api/index.js" }
   ]
 }
