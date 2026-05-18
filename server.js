@@ -33,7 +33,13 @@ const collectionName = process.env.MONGODB_COLLECTION || "sandbox_states";
 let mongoClientPromise;
 function getMongoClient() {
   if (!mongoClientPromise) {
-    mongoClientPromise = new MongoClient(process.env.MONGODB_URI).connect();
+    mongoClientPromise = new MongoClient(process.env.MONGODB_URI)
+      .connect()
+      .catch((error) => {
+        // Reset cached promise so the next request can retry a fresh connection.
+        mongoClientPromise = undefined;
+        throw error;
+      });
   }
   return mongoClientPromise;
 }
@@ -218,13 +224,19 @@ async function ensureIndexes() {
   await collection.createIndex({ userSub: 1 }, { unique: true });
 }
 
-ensureIndexes()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Zen Sandbox server running at ${BASE_URL}`);
-    });
-  })
-  .catch((error) => {
-    console.error("Failed to initialize server:", error);
-    process.exit(1);
-  });
+const mongoRetryMs = Number(process.env.MONGODB_RETRY_MS || 30000);
+
+async function initializeMongoIndexesWithRetry() {
+  try {
+    await ensureIndexes();
+    console.log("MongoDB connected and indexes are ready.");
+  } catch (error) {
+    console.error("MongoDB initialization failed; retrying:", error);
+    setTimeout(initializeMongoIndexesWithRetry, mongoRetryMs);
+  }
+}
+
+app.listen(PORT, () => {
+  console.log(`Zen Sandbox server running at ${BASE_URL}`);
+  initializeMongoIndexesWithRetry();
+});
