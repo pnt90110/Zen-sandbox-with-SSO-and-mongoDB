@@ -20,29 +20,6 @@ This app now runs through `backend/server.js` so it can use SSO and MongoDB APIs
 - `frontend/` - browser UI (`index.html`, `styles.css`, `src/app.js`)
 - `backend/` - Node.js API + OIDC server (`server.js`)
 
-## Deploy on Vercel
-
-This repository includes `vercel.json` and `api/index.js` so Vercel routes `/api/*`, `/login`, `/logout`, and `/callback` to the backend function while serving the UI from `frontend/`.
-
-Set these Environment Variables in Vercel project settings:
-
-- `BASE_URL` = your Vercel domain (for example `https://your-project.vercel.app`)
-- `SESSION_SECRET`
-- `OIDC_ISSUER_BASE_URL`
-- `OIDC_CLIENT_ID`
-- `OIDC_CLIENT_SECRET`
-- `OIDC_SCOPE` (optional)
-- `OIDC_REDIRECT_URI` = `https://your-project.vercel.app/callback` (recommended explicit)
-- `OIDC_AUDIENCE` (optional)
-- `MONGODB_URI`
-- `MONGODB_DB` (optional)
-- `MONGODB_COLLECTION` (optional)
-
-In your IdP app, add Vercel URLs:
-
-- Callback URL: `https://your-project.vercel.app/callback`
-- Logout/Post-logout URL: `https://your-project.vercel.app`
-
 ## Run with Container (Docker)
 
 1. Copy `.env.example` to `.env` and fill the required values.

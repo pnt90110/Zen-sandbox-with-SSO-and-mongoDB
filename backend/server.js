@@ -238,15 +238,7 @@ async function initializeMongoIndexesWithRetry() {
   }
 }
 
-function startLocalServer() {
-  app.listen(PORT, () => {
-    console.log(`Zen Sandbox server running at ${BASE_URL}`);
-    initializeMongoIndexesWithRetry();
-  });
-}
-
-if (require.main === module) {
-  startLocalServer();
-}
-
-module.exports = app;
+app.listen(PORT, () => {
+  console.log(`Zen Sandbox server running at ${BASE_URL}`);
+  initializeMongoIndexesWithRetry();
+});
