@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "description": "Zen Sandbox with MongoDB persistence and OIDC SSO",
-  "main": "server.js",
+  "main": "backend/server.js",
   "scripts": {
-    "dev": "node server.js",
-    "start": "node server.js"
+    "dev": "node backend/server.js",
+    "start": "node backend/server.js"
   },
   "dependencies": {
     "dotenv": "^16.5.0",

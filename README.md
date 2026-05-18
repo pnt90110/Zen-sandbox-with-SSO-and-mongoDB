@@ -13,7 +13,12 @@ A minimalist, desktop-first cellular automata toy focused on calm interaction an
    - `npm run dev`
 5. Open `http://localhost:8000`.
 
-This app now runs through `server.js` so it can use SSO and MongoDB APIs.
+This app now runs through `backend/server.js` so it can use SSO and MongoDB APIs.
+
+## Project Structure
+
+- `frontend/` - browser UI (`index.html`, `styles.css`, `src/app.js`)
+- `backend/` - Node.js API + OIDC server (`server.js`)
 
 ## Run with Container (Docker)
 
