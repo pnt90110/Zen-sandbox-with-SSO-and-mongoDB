@@ -15,6 +15,24 @@ A minimalist, desktop-first cellular automata toy focused on calm interaction an
 
 This app now runs through `server.js` so it can use SSO and MongoDB APIs.
 
+## Run with Container (Docker)
+
+1. Copy `.env.example` to `.env` and fill the required values.
+2. Build image:
+    - `docker build -t zen-sandbox .`
+3. Run container:
+    - `docker run --env-file .env -p 8000:8000 zen-sandbox`
+4. Open `http://localhost:8000`.
+
+### Docker Compose
+
+- Start:
+   - `docker compose up -d --build`
+- View logs:
+   - `docker compose logs -f`
+- Stop:
+   - `docker compose down`
+
 ## SSO + MongoDB Setup
 
 The server uses OpenID Connect (OIDC) for SSO and stores each user's sandbox state in MongoDB.
@@ -52,6 +70,9 @@ Optional values:
 - `OIDC_AUDIENCE`
 - `MONGODB_DB` (default `zen_sandbox`)
 - `MONGODB_COLLECTION` (default `sandbox_states`)
+- `MONGODB_RETRY_MS` (default `30000`) - retry interval when MongoDB is temporarily unavailable
+
+If MongoDB is temporarily unreachable, the web app still starts and retries the DB connection in the background.
 
 ### 4) Use it in the UI
 
