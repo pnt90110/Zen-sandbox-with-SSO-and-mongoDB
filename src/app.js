@@ -572,7 +572,7 @@ function updateSand(x, y, i) {
 
   const below = idx(x, belowY);
   const matBelow = cells[below];
-  if (canDisplace(Material.SAND, matBelow) && matBelow !== Material.FIRE) {
+  if (canDisplace(Material.SAND, matBelow) && matBelow !== Material.FIRE && matBelow !== Material.ICE) {
     if (matBelow === Material.EMPTY) {
       moveCell(i, below);
     } else {
@@ -591,7 +591,7 @@ function updateSand(x, y, i) {
     }
     const ni = idx(nx, ny);
     const target = cells[ni];
-    if (canDisplace(Material.SAND, target) && target !== Material.FIRE) {
+    if (canDisplace(Material.SAND, target) && target !== Material.FIRE && target !== Material.ICE) {
       if (target === Material.EMPTY) {
         moveCell(i, ni);
       } else {
