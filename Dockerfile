@@ -12,4 +12,4 @@ ENV NODE_ENV=production
 EXPOSE 8000
 
 USER node
-CMD ["node", "backend/server.js"]
+CMD ["node", "server.js"]

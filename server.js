@@ -213,12 +213,10 @@ app.put("/api/state", requiresAuth(), async (req, res) => {
   }
 });
 
-const frontendDir = path.join(__dirname, "..", "frontend");
-
-app.use(express.static(frontendDir));
+app.use(express.static(path.join(__dirname)));
 
 app.get("*", (req, res) => {
-  res.sendFile(path.join(frontendDir, "index.html"));
+  res.sendFile(path.join(__dirname, "index.html"));
 });
 
 async function ensureIndexes() {
