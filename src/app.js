@@ -239,6 +239,24 @@ function spawnSingleBall(x, y) {
     r: BALL_RADIUS,
   };
 
+  // Clear lava in the ball's spawn footprint so the collision check passes.
+  const sxMin = Math.floor(candidate.x - candidate.r);
+  const sxMax = Math.floor(candidate.x + candidate.r);
+  const syMin = Math.floor(candidate.y - candidate.r);
+  const syMax = Math.floor(candidate.y + candidate.r);
+  for (let sy = syMin; sy <= syMax; sy++) {
+    for (let sx = sxMin; sx <= sxMax; sx++) {
+      if (inBounds(sx, sy)) {
+        const si = idx(sx, sy);
+        if (cells[si] === Material.LAVA) {
+          cells[si] = Material.EMPTY;
+          life[si] = 0;
+          fireState[si] = 0;
+        }
+      }
+    }
+  }
+
   if (ballTouchesBlocking(candidate.x, candidate.y, candidate.r)) {
     return false;
   }
